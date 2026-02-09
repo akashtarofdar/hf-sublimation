@@ -13,8 +13,8 @@ import {
   updateDoc, 
   deleteDoc,
   doc, 
-  getDoc, // Added for fetching settings
-  setDoc, // Added for saving settings
+  getDoc, 
+  setDoc, 
   onSnapshot, 
   serverTimestamp, 
   query
@@ -39,17 +39,19 @@ import {
   Link,
   FileUp,
   CloudUpload,
-  Settings // Added Settings Icon
+  Settings,
+  AlertCircle // Added Alert Icon
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
 const firebaseConfig = {
-  apiKey: "AIzaSyDakYvo1uIfyWyl_incZvu3Dn4Ho11eWQg",
-  authDomain: "jerseyhub-419ea.firebaseapp.com",
-  projectId: "jerseyhub-419ea",
-  storageBucket: "jerseyhub-419ea.firebasestorage.app",
-  messagingSenderId: "973074107883",
-  appId: "1:973074107883:web:08db5e64dd7b438c0e9dae",
+  apiKey: "AIzaSyB7ubsi_hAiwJy4X-wYcA8YtoG2ERPAJwI",
+  authDomain: "hf-sublimation.firebaseapp.com",
+  projectId: "hf-sublimation",
+  storageBucket: "hf-sublimation.firebasestorage.app",
+  messagingSenderId: "92108127949",
+  appId: "1:92108127949:web:b8191c9bf1c015e8fa7384",
+  measurementId: "G-F0N2TFY5WY"
 };
 
 // Initialize Firebase
@@ -109,6 +111,7 @@ export default function App() {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passError, setPassError] = useState(false);
+  const [authError, setAuthError] = useState(null); // New state for auth errors
   
   const [user, setUser] = useState(null);
   const [designs, setDesigns] = useState([]);
@@ -123,13 +126,13 @@ export default function App() {
   // Modals
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false); // Settings Modal
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
   const [editingDesign, setEditingDesign] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   
   // Settings State
   const [googleScriptUrl, setGoogleScriptUrl] = useState('');
-  const [tempScriptUrl, setTempScriptUrl] = useState(''); // For input field
+  const [tempScriptUrl, setTempScriptUrl] = useState('');
 
   // Form State
   const [newDesignTitle, setNewDesignTitle] = useState('');
@@ -145,22 +148,34 @@ export default function App() {
 
   const SITE_PASSWORD = '866535';
 
-  // Auth Effect
+  // Auth Effect - Fixed Error Handling
   useEffect(() => {
     const login = async () => {
       try {
         await signInAnonymously(auth);
       } catch (err) {
         console.error("Auth Error:", err);
+        if (err.code === 'auth/configuration-not-found') {
+          setAuthError("Firebase Console-এ Anonymous Auth চালু করা নেই। অনুগ্রহ করে Authentication সেকশনে গিয়ে এটি Enable করুন।");
+        } else {
+          setAuthError("সার্ভার কানেকশন এরর: " + err.message);
+        }
+        setLoading(false); // Stop loading even if error
       }
     };
     login();
-    return onAuthStateChanged(auth, setUser);
+    return onAuthStateChanged(auth, (currentUser) => {
+      setUser(currentUser);
+      if (currentUser) {
+        setAuthError(null); // Clear error on success
+      }
+    });
   }, []);
 
   // Firestore Data Fetching (Designs)
   useEffect(() => {
-    if (!user) return;
+    if (!user) return; // Wait for user to be authenticated to avoid "Offline" errors
+    
     const q = query(collection(db, 'designs'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -169,13 +184,19 @@ export default function App() {
       setLoading(false);
     }, (err) => {
       console.error("Firestore Error:", err);
-      setLoading(false);
+      // Don't set loading false here immediately to allow retries, 
+      // but if it persists, you might want to show an error.
+      if (err.code !== 'unavailable') { 
+         setLoading(false);
+      }
     });
     return () => unsubscribe();
   }, [user]);
 
-  // Fetch Settings (Script URL)
+  // Fetch Settings (Script URL) - Moved to wait for user
   useEffect(() => {
+    if (!user) return; // Wait for auth
+    
     const fetchSettings = async () => {
       try {
         const docRef = doc(db, "settings", "config");
@@ -190,7 +211,7 @@ export default function App() {
       }
     };
     fetchSettings();
-  }, []);
+  }, [user]);
 
   // Handlers
   const handlePasswordSubmit = (e) => {
@@ -315,7 +336,6 @@ export default function App() {
   };
 
   const handleUpload = async () => {
-    // Validation
     if (!fileToUpload || !newDesignTitle) {
       alert("ডিজাইনের নাম এবং প্রিভিউ ছবি দেওয়া বাধ্যতামূলক।");
       return;
@@ -333,24 +353,21 @@ export default function App() {
     try {
       let finalSourceLink = sourceLink;
 
-      // 1. Upload Source File to Drive (if selected)
       if (useFileUpload && sourceFile) {
         setUploadStatus('ড্রাইভে ফাইল আপলোড হচ্ছে... (অপেক্ষা করুন)');
         finalSourceLink = await uploadToGoogleDrive(sourceFile);
       }
 
-      // 2. Compress Preview Image
       setUploadStatus('প্রিভিউ ছবি প্রসেসিং হচ্ছে...');
       const compressedBase64 = await compressImage(fileToUpload);
 
-      // 3. Save to Firebase
       setUploadStatus('ডাটাবেসে সেভ হচ্ছে...');
       await addDoc(collection(db, 'designs'), {
         title: newDesignTitle,
         tag: newDesignTag,
         color: newDesignColor,
         imageData: compressedBase64,
-        sourceLink: finalSourceLink, // Stores the Drive Link
+        sourceLink: finalSourceLink,
         uploaderId: user.uid,
         createdAt: serverTimestamp(),
       });
@@ -410,9 +427,21 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="flex flex-col items-center justify-center h-screen bg-slate-50">
-        <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mb-4" />
-        <p className="text-slate-500 font-medium animate-pulse">লোড হচ্ছে...</p>
+      <div className="flex flex-col items-center justify-center h-screen bg-slate-50 p-4">
+        {authError ? (
+          <div className="text-center max-w-md p-6 bg-red-50 rounded-2xl border border-red-100">
+            <div className="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mx-auto mb-4 text-red-500">
+              <AlertCircle size={32} />
+            </div>
+            <h3 className="text-xl font-bold text-red-700 mb-2">সেটআপ এরর</h3>
+            <p className="text-red-600 text-sm">{authError}</p>
+          </div>
+        ) : (
+          <>
+            <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mb-4" />
+            <p className="text-slate-500 font-medium animate-pulse">লোড হচ্ছে...</p>
+          </>
+        )}
       </div>
     );
   }
@@ -420,6 +449,13 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-700">
       
+      {/* Error Banner if auth fails later */}
+      {authError && (
+        <div className="bg-red-500 text-white text-center py-2 px-4 text-sm font-bold animate-pulse">
+          {authError}
+        </div>
+      )}
+
       {/* --- HEADER --- */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-lg border-b border-slate-200 shadow-sm transition-all duration-300">
         <div className="max-w-7xl mx-auto px-4 py-4 md:py-5 flex flex-col items-center gap-4">
