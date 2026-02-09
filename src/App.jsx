@@ -3,12 +3,14 @@ import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
   signInAnonymously, 
-  onAuthStateChanged 
+  onAuthStateChanged,
+  signOut
 } from 'firebase/auth';
 import { 
   getFirestore, 
   collection, 
   addDoc, 
+  updateDoc, // Added for editing
   deleteDoc,
   doc, 
   onSnapshot, 
@@ -27,7 +29,11 @@ import {
   Trash2,
   LogIn,
   LogOut,
-  Save
+  Save,
+  Download,
+  Palette,
+  Filter,
+  Pencil // Added icon
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -45,6 +51,20 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
+// Helper Data
+const COLORS = [
+  { name: 'Red', hex: '#ef4444' },
+  { name: 'Blue', hex: '#3b82f6' },
+  { name: 'Green', hex: '#22c55e' },
+  { name: 'Yellow', hex: '#eab308' },
+  { name: 'Black', hex: '#1e293b' },
+  { name: 'White', hex: '#f8fafc' },
+  { name: 'Purple', hex: '#a855f7' },
+  { name: 'Orange', hex: '#f97316' },
+  { name: 'Cyan', hex: '#06b6d4' },
+  { name: 'Multicolor', hex: 'linear-gradient(to right, #ef4444, #3b82f6, #22c55e)' }
+];
+
 // Image Compression Helper
 const compressImage = (file) => {
   return new Promise((resolve) => {
@@ -55,13 +75,13 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; 
+        const MAX_WIDTH = 1000;
         const scaleSize = MAX_WIDTH / img.width;
         canvas.width = MAX_WIDTH;
         canvas.height = img.height * scaleSize;
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.7));
+        resolve(canvas.toDataURL('image/jpeg', 0.8));
       };
     };
   });
@@ -78,17 +98,26 @@ export default function App() {
   const [designs, setDesigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  
+  // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
+  const [selectedColorFilter, setSelectedColorFilter] = useState('All');
+  
+  // Modals
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false); // New Edit Modal
+  const [editingDesign, setEditingDesign] = useState(null); // Data for editing
   const [selectedImage, setSelectedImage] = useState(null);
   
+  // Form State (Shared for Upload & Edit)
   const [newDesignTitle, setNewDesignTitle] = useState('');
   const [newDesignTag, setNewDesignTag] = useState('Sublimation');
+  const [newDesignColor, setNewDesignColor] = useState('Multicolor');
   const [sourceLink, setSourceLink] = useState('');
   const [previewUrl, setPreviewUrl] = useState(null);
   const [fileToUpload, setFileToUpload] = useState(null);
 
-  const SITE_PASSWORD = '866535';
+  const SITE_PASSWORD = '252746';
 
   // Auth Effect
   useEffect(() => {
@@ -151,6 +180,42 @@ export default function App() {
     }
   };
 
+  // --- EDIT HANDLERS ---
+  const openEditModal = (e, design) => {
+    e.stopPropagation();
+    setEditingDesign(design);
+    setNewDesignTitle(design.title);
+    setNewDesignTag(design.tag);
+    setNewDesignColor(design.color || 'Multicolor');
+    setSourceLink(design.sourceLink || '');
+    setIsEditModalOpen(true);
+  };
+
+  const handleUpdate = async () => {
+    if (!editingDesign) return;
+    setUploading(true);
+    try {
+      const designRef = doc(db, 'designs', editingDesign.id);
+      await updateDoc(designRef, {
+        title: newDesignTitle,
+        tag: newDesignTag,
+        color: newDesignColor,
+        sourceLink: sourceLink
+      });
+      
+      // Reset & Close
+      setIsEditModalOpen(false);
+      setEditingDesign(null);
+      resetForm();
+    } catch (err) {
+      console.error("Update Error:", err);
+      alert("আপডেট সফল হয়নি।");
+    } finally {
+      setUploading(false);
+    }
+  };
+
+  // --- UPLOAD HANDLERS ---
   const handleFileSelect = (e) => {
     const file = e.target.files[0];
     if (file && file.type.startsWith('image/')) {
@@ -167,21 +232,27 @@ export default function App() {
       await addDoc(collection(db, 'designs'), {
         title: newDesignTitle,
         tag: newDesignTag,
+        color: newDesignColor,
         imageData: compressedBase64,
         sourceLink: sourceLink,
         uploaderId: user.uid,
         createdAt: serverTimestamp(),
       });
-      setFileToUpload(null);
-      setPreviewUrl(null);
-      setNewDesignTitle('');
-      setSourceLink('');
       setIsUploadModalOpen(false);
+      resetForm();
     } catch (err) {
       alert("আপলোড সফল হয়নি।");
     } finally {
       setUploading(false);
     }
+  };
+
+  const resetForm = () => {
+    setFileToUpload(null);
+    setPreviewUrl(null);
+    setNewDesignTitle('');
+    setSourceLink('');
+    setNewDesignColor('Multicolor');
   };
 
   const openSourceLink = (link) => {
@@ -204,93 +275,214 @@ export default function App() {
   };
 
   const filteredDesigns = useMemo(() => {
-    return designs.filter(d => 
-      d.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      d.tag.toLowerCase().includes(searchQuery.toLowerCase())
-    );
-  }, [designs, searchQuery]);
+    return designs.filter(d => {
+      const matchesSearch = 
+        d.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        d.tag.toLowerCase().includes(searchQuery.toLowerCase());
+      
+      const matchesColor = selectedColorFilter === 'All' || d.color === selectedColorFilter;
+
+      return matchesSearch && matchesColor;
+    });
+  }, [designs, searchQuery, selectedColorFilter]);
 
   if (loading) {
     return (
       <div className="flex flex-col items-center justify-center h-screen bg-slate-50">
-        <Loader2 className="w-10 h-10 animate-spin text-teal-600 mb-4" />
-        <p className="text-slate-600 font-medium italic">HF Sublimation লোড হচ্ছে...</p>
+        <Loader2 className="w-12 h-12 animate-spin text-indigo-600 mb-4" />
+        <p className="text-slate-500 font-medium animate-pulse">লোড হচ্ছে...</p>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 text-slate-900 font-sans">
-      {/* Header */}
-      <header className="sticky top-0 z-30 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm px-4 py-4">
-        <div className="max-w-7xl mx-auto flex items-center justify-between gap-4">
-          <div className="flex items-center gap-2">
-            <div className="bg-teal-600 p-2 rounded-lg text-white">
-              <ImageIcon size={24} />
-            </div>
-            <h1 className="text-xl font-bold text-teal-800 hidden md:block">HF Sublimation</h1>
-          </div>
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-700">
+      
+      {/* --- HEADER --- */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-lg border-b border-slate-200 shadow-sm transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 py-4 md:py-5 flex flex-col items-center gap-4">
           
-          <div className="flex-1 max-w-md relative">
-            <Search className="absolute left-3 top-2.5 text-slate-400" size={18} />
-            <input 
-              type="text" 
-              placeholder="ডিজাইন খুঁজুন..." 
-              className="w-full pl-10 pr-4 py-2 bg-slate-100 rounded-full border-none focus:ring-2 focus:ring-teal-500 transition-all"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-            />
+          <div className="w-full flex items-center justify-between">
+            <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => {window.scrollTo(0, 0); setSelectedColorFilter('All'); setSearchQuery('');}}>
+                <div className="bg-gradient-to-tr from-indigo-600 to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-200">
+                    <ImageIcon size={24} />
+                </div>
+                <div>
+                    <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700 hidden sm:block">
+                    HF Sublimation
+                    </h1>
+                    <h1 className="text-xl font-bold text-indigo-700 sm:hidden">HF</h1>
+                </div>
+                </div>
+            </div>
+
+            <div className="flex-1 max-w-md mx-4 relative group">
+                <Search className="absolute left-4 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                <input 
+                type="text" 
+                placeholder="ডিজাইন খুঁজুন..." 
+                className="w-full pl-11 pr-4 py-2.5 bg-slate-100 border-none rounded-full focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all shadow-inner outline-none text-sm font-medium"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                />
+            </div>
+
+            <div className="flex items-center gap-2">
+                {isAuthenticated ? (
+                <>
+                    <button 
+                    onClick={() => { resetForm(); setIsUploadModalOpen(true); }}
+                    className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
+                    title="আপলোড"
+                    >
+                    <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
+                    </button>
+                    <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
+                </>
+                ) : (
+                <button 
+                    onClick={() => setShowLoginModal(true)} 
+                    className="bg-slate-800 hover:bg-slate-900 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md"
+                >
+                    <LogIn size={18} /> <span className="hidden sm:inline">লগইন</span>
+                </button>
+                )}
+            </div>
           </div>
 
-          <div className="flex items-center gap-2">
-            {isAuthenticated ? (
-              <>
-                <button 
-                  onClick={() => setIsUploadModalOpen(true)}
-                  className="bg-teal-600 hover:bg-teal-700 text-white px-4 py-2 rounded-full flex items-center gap-2 transition-all shadow-md active:scale-95"
-                >
-                  <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
-                </button>
-                <button onClick={handleLogout} className="bg-red-100 text-red-600 p-2 rounded-full hover:bg-red-200" title="লগ আউট">
-                  <LogOut size={20} />
-                </button>
-              </>
-            ) : (
-              <button onClick={() => setShowLoginModal(true)} className="bg-slate-800 hover:bg-slate-900 text-white px-4 py-2 rounded-full flex items-center gap-2 shadow-md">
-                <LogIn size={18} /> <span className="hidden sm:inline">লগইন</span>
+          {/* Color Filters */}
+          <div className="w-full overflow-x-auto pb-1 no-scrollbar flex items-center gap-2">
+            <div className="flex items-center gap-1 text-slate-400 text-xs font-bold uppercase mr-2 shrink-0">
+               <Filter size={14} /> ফিল্টার:
+            </div>
+            <button 
+              onClick={() => setSelectedColorFilter('All')}
+              className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all shrink-0 ${selectedColorFilter === 'All' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}
+            >
+              সব ডিজাইন
+            </button>
+            {COLORS.map((c) => (
+              <button
+                key={c.name}
+                onClick={() => setSelectedColorFilter(c.name)}
+                className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-2 transition-all shrink-0 ${
+                  selectedColorFilter === c.name 
+                    ? 'bg-white text-slate-800 border-indigo-500 ring-1 ring-indigo-500 shadow-sm' 
+                    : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                }`}
+              >
+                <span 
+                  className="w-3 h-3 rounded-full border border-black/10" 
+                  style={{ background: c.hex }}
+                ></span>
+                {c.name}
               </button>
-            )}
+            ))}
           </div>
+
         </div>
       </header>
 
-      {/* Grid */}
+      {/* --- MAIN GRID --- */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {filteredDesigns.length === 0 ? (
-          <div className="text-center py-20 bg-white rounded-2xl border-2 border-dashed border-slate-200 text-slate-400">
-            কোনো ডিজাইন পাওয়া যায়নি।
+          <div className="flex flex-col items-center justify-center py-24 bg-white rounded-3xl border border-dashed border-slate-200 shadow-sm mt-8">
+            <div className="bg-slate-50 p-4 rounded-full mb-4">
+               <Search size={32} className="text-slate-300" />
+            </div>
+            <p className="text-slate-500 font-medium">এই ক্যাটাগরিতে কোনো ডিজাইন নেই</p>
+            {selectedColorFilter !== 'All' && (
+               <button onClick={() => setSelectedColorFilter('All')} className="text-indigo-600 text-sm font-bold mt-2 hover:underline">
+                  সব ডিজাইন দেখুন
+               </button>
+            )}
           </div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
             {filteredDesigns.map(design => (
-              <div key={design.id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden group hover:shadow-lg transition-shadow">
-                <div className="relative aspect-square cursor-pointer" onClick={() => setSelectedImage(design)}>
-                  <img src={design.imageData} alt={design.title} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                  <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center gap-3 transition-opacity">
-                    <button className="bg-white p-2 rounded-full text-slate-900 hover:text-teal-600"><Maximize2 size={20} /></button>
-                    {isAuthenticated && <button onClick={(e) => handleDelete(e, design.id)} className="bg-red-500 p-2 rounded-full text-white"><Trash2 size={20} /></button>}
+              <div 
+                key={design.id} 
+                className="bg-white rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden group transition-all duration-300 hover:-translate-y-1 flex flex-col"
+              >
+                
+                {/* Image Area */}
+                <div 
+                   className="relative w-full aspect-[4/5] bg-slate-50 overflow-hidden cursor-pointer border-b border-slate-50"
+                   onClick={() => setSelectedImage(design)}
+                >
+                  <img 
+                    src={design.imageData} 
+                    alt={design.title} 
+                    className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" 
+                  />
+                  
+                  {/* Tag & Color Dot */}
+                  <div className="absolute top-3 right-3 flex flex-col items-end gap-1">
+                      <span className="text-[10px] bg-white/90 backdrop-blur text-indigo-600 px-2.5 py-1 rounded-md shadow-sm font-bold tracking-wide uppercase border border-indigo-50">
+                        {design.tag}
+                      </span>
+                      {design.color && (
+                         <div 
+                           className="w-4 h-4 rounded-full border border-white shadow-sm" 
+                           style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}
+                           title={design.color}
+                         ></div>
+                      )}
                   </div>
-                  <span className="absolute top-2 right-2 text-[10px] bg-white/95 text-teal-700 px-2 py-1 rounded shadow-sm font-bold uppercase">{design.tag}</span>
+
+                  {/* Hover Overlay */}
+                  <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                     <div className="bg-white/90 backdrop-blur text-slate-800 px-4 py-2 rounded-full shadow-lg font-medium text-sm transform translate-y-2 group-hover:translate-y-0 transition-transform">
+                        ক্লিক করে দেখুন
+                     </div>
+                  </div>
                 </div>
-                <div className="p-4">
-                  <h3 className="font-bold truncate mb-3 text-slate-700">{design.title}</h3>
-                  <div className="grid grid-cols-2 gap-2">
-                    <button onClick={(e) => downloadImageOnly(e, design.imageData, design.title)} className="bg-slate-100 text-slate-700 py-2 rounded-lg text-xs font-bold hover:bg-slate-200 flex items-center justify-center gap-1">
-                      <Save size={14} /> ছবি
+
+                {/* Content Area */}
+                <div className="p-5 flex flex-col flex-1">
+                  <div className="flex justify-between items-start mb-4">
+                     <h3 className="font-bold text-slate-700 text-base leading-tight line-clamp-2" title={design.title}>{design.title}</h3>
+                     
+                     {isAuthenticated && (
+                       <div className="flex gap-1 -mt-1 -mr-2">
+                        {/* Edit Button */}
+                        <button 
+                           onClick={(e) => openEditModal(e, design)} 
+                           className="text-slate-300 hover:text-indigo-500 transition-colors p-1"
+                           title="এডিট করুন"
+                        >
+                           <Pencil size={16} />
+                        </button>
+                        {/* Delete Button */}
+                        <button 
+                           onClick={(e) => handleDelete(e, design.id)} 
+                           className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                           title="ডিলিট করুন"
+                        >
+                           <Trash2 size={16} />
+                        </button>
+                       </div>
+                     )}
+                  </div>
+                  
+                  <div className={`mt-auto grid gap-3 ${isAuthenticated ? 'grid-cols-2' : 'grid-cols-1'}`}>
+                    <button 
+                      onClick={(e) => downloadImageOnly(e, design.imageData, design.title)}
+                      className="bg-slate-50 text-slate-600 border border-slate-200 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-100 hover:text-indigo-600 hover:border-indigo-100 transition-all flex items-center justify-center gap-1.5"
+                    >
+                      <Download size={14} /> ছবি সেভ
                     </button>
-                    <button onClick={() => openSourceLink(design.sourceLink)} className={`py-2 rounded-lg text-xs font-bold transition-colors flex items-center justify-center gap-1 text-white ${isAuthenticated ? 'bg-teal-600 hover:bg-teal-700' : 'bg-slate-800 hover:bg-slate-900'}`}>
-                      {isAuthenticated ? <Unlock size={14} /> : <Lock size={14} />} {isAuthenticated ? 'AI ফাইল' : 'সোর্স ফাইল'}
-                    </button>
+
+                    {isAuthenticated && (
+                      <button 
+                        onClick={() => openSourceLink(design.sourceLink)}
+                        className="py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-white shadow-sm bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200"
+                      >
+                        <Unlock size={14} />
+                        AI ফাইল
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
@@ -299,65 +491,210 @@ export default function App() {
         )}
       </main>
 
-      {/* Login Modal */}
+      {/* --- LOGIN MODAL --- */}
       {showLoginModal && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl p-8 w-full max-w-sm text-center relative shadow-2xl">
-            <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4 text-slate-400"><X size={20} /></button>
-            <div className="w-14 h-14 bg-teal-100 rounded-full flex items-center justify-center mx-auto mb-4"><Lock className="text-teal-600" size={24} /></div>
-            <h2 className="text-xl font-bold text-slate-800">অ্যাডমিন এক্সেস</h2>
-            <form onSubmit={handlePasswordSubmit} className="mt-6 space-y-4">
-              <input type="password" autoFocus value={passwordInput} onChange={(e) => setPasswordInput(e.target.value)} placeholder="পাসওয়ার্ড..." className={`w-full p-3 text-center border rounded-xl focus:ring-2 outline-none ${passError ? 'border-red-500' : 'border-slate-200'}`} />
-              <button type="submit" className="w-full bg-teal-600 text-white py-3 rounded-xl font-bold active:scale-95">আনলক করুন</button>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+           <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setShowLoginModal(false)}></div>
+            <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-sm text-center relative z-10 animate-[scaleIn_0.2s_ease-out]">
+            <button onClick={() => setShowLoginModal(false)} className="absolute top-5 right-5 text-slate-400 hover:text-slate-600 transition-colors">
+              <X size={20} />
+            </button>
+            <div className="w-16 h-16 bg-indigo-50 rounded-2xl flex items-center justify-center mx-auto mb-5 rotate-3">
+              <Lock className="text-indigo-600" size={28} />
+            </div>
+            <h2 className="text-2xl font-bold text-slate-800 mb-2">অ্যাডমিন এক্সেস</h2>
+            <p className="text-slate-500 text-sm mb-8 px-4">পাসওয়ার্ড দিন।</p>
+            
+            <form onSubmit={handlePasswordSubmit} className="space-y-4">
+              <div className="relative">
+                 <input 
+                   type="password"
+                   autoFocus
+                   value={passwordInput}
+                   onChange={(e) => setPasswordInput(e.target.value)}
+                   placeholder="পাসওয়ার্ড লিখুন"
+                   className={`w-full p-4 text-center text-lg tracking-widest border rounded-xl focus:ring-4 outline-none transition-all ${
+                     passError 
+                       ? 'border-red-200 focus:ring-red-100 bg-red-50 text-red-600 placeholder:text-red-300' 
+                       : 'border-slate-200 focus:ring-indigo-100 focus:border-indigo-400 bg-slate-50'
+                   }`}
+                 />
+              </div>
+              {passError && <p className="text-red-500 text-xs font-bold animate-bounce">ভুল পাসওয়ার্ড!</p>}
+              
+              <button 
+                type="submit"
+                className="w-full bg-gradient-to-r from-indigo-600 to-purple-600 text-white py-4 rounded-xl font-bold hover:shadow-lg hover:shadow-indigo-200 transition-all active:scale-[0.98] text-base"
+              >
+                আনলক করুন
+              </button>
             </form>
           </div>
         </div>
       )}
 
-      {/* Upload Modal */}
+      {/* --- UPLOAD MODAL --- */}
       {isUploadModalOpen && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4 backdrop-blur-sm">
-          <div className="bg-white rounded-2xl w-full max-w-md overflow-hidden shadow-2xl">
-            <div className="p-6 border-b flex justify-between items-center bg-slate-50">
-              <h2 className="font-bold">নতুন ডিজাইন আপলোড</h2>
-              <X className="cursor-pointer hover:text-red-500" onClick={() => setIsUploadModalOpen(false)} />
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsUploadModalOpen(false)}></div>
+          <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden relative z-10 shadow-2xl animate-[fadeIn_0.3s_ease-out]">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
+              <h2 className="font-bold text-lg text-slate-800">নতুন ডিজাইন আপলোড</h2>
+              <button className="bg-slate-100 p-2 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors" onClick={() => setIsUploadModalOpen(false)}>
+                 <X size={18} />
+              </button>
             </div>
-            <div className="p-6 space-y-4">
-              <div className="border-2 border-dashed border-slate-200 rounded-xl p-4 text-center relative bg-slate-50/50">
+            
+            <div className="p-6 space-y-5">
+              <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all relative group cursor-pointer">
                 <input type="file" accept="image/*" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
-                {previewUrl ? <img src={previewUrl} className="h-40 mx-auto rounded object-contain" /> : <div className="py-8 text-slate-400 text-sm">ডিজাইনের ছবি এখানে দিন</div>}
+                
+                {previewUrl ? (
+                  <div className="relative inline-block">
+                     <img src={previewUrl} className="h-48 mx-auto rounded-lg shadow-sm object-contain bg-white" alt="Preview" />
+                     <div className="absolute inset-0 bg-black/20 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
+                        <p className="text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full">ছবি পরিবর্তন করুন</p>
+                     </div>
+                  </div>
+                ) : (
+                  <div className="py-6 flex flex-col items-center">
+                    <div className="bg-indigo-50 p-4 rounded-full mb-3 group-hover:scale-110 transition-transform">
+                       <Upload size={24} className="text-indigo-500" />
+                    </div>
+                    <span className="text-sm font-medium text-slate-600">ডিজাইনের ছবি (JPG/PNG)</span>
+                    <span className="text-xs text-slate-400 mt-1">এখানে ড্রপ করুন বা ক্লিক করুন</span>
+                  </div>
+                )}
               </div>
-              <input type="text" placeholder="নাম..." className="w-full p-3 border rounded-lg outline-none" value={newDesignTitle} onChange={e => setNewDesignTitle(e.target.value)} />
-              <input type="text" placeholder="সোর্স লিঙ্ক..." className="w-full p-3 border rounded-lg outline-none" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
-              <div className="flex flex-wrap gap-2">
-                {['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve'].map(t => (
-                  <button key={t} onClick={() => setNewDesignTag(t)} className={`px-3 py-1 rounded-full text-xs font-medium border ${newDesignTag === t ? 'bg-teal-600 text-white' : 'bg-white text-slate-500'}`}>{t}</button>
-                ))}
+
+              <div className="space-y-3">
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">নাম</label>
+                    <input type="text" placeholder="ডিজাইনের নাম..." className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" value={newDesignTitle} onChange={e => setNewDesignTitle(e.target.value)} />
+                 </div>
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">লিঙ্ক</label>
+                    <input type="text" placeholder="Drive Link..." className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm font-mono text-indigo-600" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
+                 </div>
+              </div>
+
+              <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block flex items-center gap-1"><Palette size={12}/> কালার</label>
+                 <div className="flex flex-wrap gap-2">
+                    {COLORS.map((c) => (
+                      <button 
+                        key={c.name}
+                        onClick={() => setNewDesignColor(c.name)}
+                        className={`w-8 h-8 rounded-full border-2 transition-all shadow-sm ${newDesignColor === c.name ? 'ring-2 ring-indigo-500 ring-offset-2 scale-110 border-white' : 'border-slate-100 hover:scale-110'}`}
+                        style={{ background: c.hex }}
+                        title={c.name}
+                      />
+                    ))}
+                 </div>
+              </div>
+
+              <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">ক্যাটাগরি</label>
+                 <div className="flex flex-wrap gap-2">
+                   {['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve', 'Shorts', 'Pattern'].map(t => (
+                     <button key={t} onClick={() => setNewDesignTag(t)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newDesignTag === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                   ))}
+                 </div>
               </div>
             </div>
-            <div className="p-6 bg-slate-50 flex gap-3">
-              <button onClick={() => setIsUploadModalOpen(false)} className="flex-1 py-2 rounded-lg border">বাতিল</button>
-              <button onClick={handleUpload} disabled={uploading || !fileToUpload} className="flex-1 py-2 bg-teal-600 text-white rounded-lg disabled:opacity-50">
-                {uploading ? <Loader2 className="animate-spin mx-auto" size={18} /> : 'আপলোড নিশ্চিত করুন'}
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4">
+              <button onClick={() => setIsUploadModalOpen(false)} className="flex-1 py-3.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-white font-bold transition-colors">বাতিল</button>
+              <button onClick={handleUpload} disabled={uploading || !fileToUpload} className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 font-bold hover:bg-indigo-700 shadow-lg">
+                {uploading ? <Loader2 className="animate-spin" size={20} /> : 'আপলোড নিশ্চিত করুন'}
               </button>
             </div>
           </div>
         </div>
       )}
 
-      {/* Full Preview */}
-      {selectedImage && (
-        <div className="fixed inset-0 z-[60] bg-black/95 flex flex-col items-center justify-center p-4" onClick={() => setSelectedImage(null)}>
-          <button onClick={() => setSelectedImage(null)} className="absolute top-4 right-4 text-white/50 hover:text-white"><X size={32} /></button>
-          <img src={selectedImage.imageData} className="max-w-full max-h-[75vh] rounded-lg shadow-2xl" onClick={(e) => e.stopPropagation()} />
-          <div className="mt-6 flex flex-col items-center gap-4" onClick={(e) => e.stopPropagation()}>
-            <h2 className="text-white text-xl font-bold">{selectedImage.title}</h2>
-            <div className="flex gap-4">
-              <button onClick={(e) => downloadImageOnly(e, selectedImage.imageData, selectedImage.title)} className="bg-white text-slate-900 px-6 py-2 rounded-full font-bold flex items-center gap-2"><Save size={18} /> ছবি সেভ</button>
-              <button onClick={() => openSourceLink(selectedImage.sourceLink)} className={`px-6 py-2 rounded-full font-bold text-white ${isAuthenticated ? 'bg-teal-600' : 'bg-slate-800'}`}>
-                {isAuthenticated ? 'AI ফাইল ডাউনলোড' : 'সোর্স ফাইল (লক)'}
+      {/* --- EDIT MODAL (FOR OLD DESIGNS) --- */}
+      {isEditModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsEditModalOpen(false)}></div>
+          <div className="bg-white rounded-3xl w-full max-w-lg overflow-hidden relative z-10 shadow-2xl animate-[fadeIn_0.3s_ease-out]">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
+              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                 <Pencil size={18} className="text-indigo-600"/> এডিট ডিজাইন
+              </h2>
+              <button className="bg-slate-100 p-2 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors" onClick={() => setIsEditModalOpen(false)}>
+                 <X size={18} />
               </button>
             </div>
+            
+            <div className="p-6 space-y-5">
+              {/* Existing Image Display (Read Only) */}
+              <div className="flex justify-center mb-4">
+                  <img src={editingDesign?.imageData} alt="Preview" className="h-32 object-contain rounded-lg shadow-sm border border-slate-200" />
+              </div>
+
+              <div className="space-y-3">
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">নাম</label>
+                    <input type="text" className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" value={newDesignTitle} onChange={e => setNewDesignTitle(e.target.value)} />
+                 </div>
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">লিঙ্ক</label>
+                    <input type="text" className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm font-mono text-indigo-600" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
+                 </div>
+              </div>
+
+              {/* Color Update */}
+              <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block flex items-center gap-1"><Palette size={12}/> কালার আপডেট করুন</label>
+                 <div className="flex flex-wrap gap-2">
+                    {COLORS.map((c) => (
+                      <button 
+                        key={c.name}
+                        onClick={() => setNewDesignColor(c.name)}
+                        className={`w-8 h-8 rounded-full border-2 transition-all shadow-sm ${newDesignColor === c.name ? 'ring-2 ring-indigo-500 ring-offset-2 scale-110 border-white' : 'border-slate-100 hover:scale-110'}`}
+                        style={{ background: c.hex }}
+                        title={c.name}
+                      />
+                    ))}
+                 </div>
+                 <p className="text-xs text-slate-400 mt-1 ml-1">সিলেক্ট করা: <span className="font-bold text-indigo-600">{newDesignColor}</span></p>
+              </div>
+
+              <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">ক্যাটাগরি</label>
+                 <div className="flex flex-wrap gap-2">
+                   {['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve', 'Shorts', 'Pattern'].map(t => (
+                     <button key={t} onClick={() => setNewDesignTag(t)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newDesignTag === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                   ))}
+                 </div>
+              </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4">
+              <button onClick={() => setIsEditModalOpen(false)} className="flex-1 py-3.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-white font-bold transition-colors">বাতিল</button>
+              <button onClick={handleUpdate} disabled={uploading} className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 font-bold hover:bg-indigo-700 shadow-lg">
+                {uploading ? <Loader2 className="animate-spin" size={20} /> : 'সেভ করুন'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* --- FULL IMAGE PREVIEW --- */}
+      {selectedImage && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4 md:p-8 animate-[fadeIn_0.2s_ease-out]">
+          <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md" onClick={() => setSelectedImage(null)}></div>
+          <button onClick={() => setSelectedImage(null)} className="absolute top-4 right-4 z-50 bg-white/10 text-white p-2 rounded-full hover:bg-white/20 transition-all"><X size={24} /></button>
+          
+          <div className="relative w-full max-w-5xl h-full max-h-[90vh] flex flex-col items-center justify-center" onClick={(e) => e.stopPropagation()}>
+             <img src={selectedImage.imageData} className="w-full h-full object-contain rounded-lg shadow-2xl" alt="Full View" />
+             <div className="absolute bottom-4 left-1/2 -translate-x-1/2 bg-white/95 backdrop-blur-md px-6 py-3 rounded-2xl shadow-xl flex items-center gap-4 border border-white/20">
+                <h3 className="text-slate-800 font-bold mr-2 hidden sm:block">{selectedImage.title}</h3>
+                {isAuthenticated && <div className="h-6 w-px bg-slate-300 hidden sm:block"></div>}
+                <button onClick={(e) => downloadImageOnly(e, selectedImage.imageData, selectedImage.title)} className="bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-bold hover:bg-indigo-100 flex items-center gap-2 text-sm transition-colors"><Download size={16} /> <span className="hidden sm:inline">সেভ</span></button>
+                {isAuthenticated && (<button onClick={() => openSourceLink(selectedImage.sourceLink)} className="px-4 py-2 rounded-lg font-bold flex items-center gap-2 text-sm transition-colors text-white bg-indigo-600 hover:bg-indigo-700"><Unlock size={16} /> AI ফাইল</button>)}
+             </div>
           </div>
         </div>
       )}
