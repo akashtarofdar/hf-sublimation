@@ -73,7 +73,7 @@ const COLORS = [
   { name: 'Multicolor', hex: 'linear-gradient(to right, #ef4444, #3b82f6, #22c55e)' }
 ];
 
-// Image Compression Helper
+// Image Compression Helper (Optimized for Speed)
 const compressImage = (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -83,13 +83,21 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 1000;
+        const MAX_WIDTH = 800; // Reduced max width for faster loading
         const scaleSize = MAX_WIDTH / img.width;
-        canvas.width = MAX_WIDTH;
-        canvas.height = img.height * scaleSize;
+        
+        // If image is smaller than max width, keep original size
+        const finalWidth = Math.min(img.width, MAX_WIDTH);
+        const finalHeight = img.width > MAX_WIDTH ? img.height * scaleSize : img.height;
+
+        canvas.width = finalWidth;
+        canvas.height = finalHeight;
+        
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
-        resolve(canvas.toDataURL('image/jpeg', 0.8));
+        
+        // Converted to WebP format with 0.7 quality for high compression & good visual
+        resolve(canvas.toDataURL('image/webp', 0.7));
       };
     };
   });
@@ -146,7 +154,7 @@ export default function App() {
   const [sourceFile, setSourceFile] = useState(null);
   const [useFileUpload, setUseFileUpload] = useState(false);
 
-  const SITE_PASSWORD = '866535';
+  const SITE_PASSWORD = '252746';
 
   // Auth Effect - Fixed Error Handling
   useEffect(() => {
