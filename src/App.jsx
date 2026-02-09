@@ -10,9 +10,11 @@ import {
   getFirestore, 
   collection, 
   addDoc, 
-  updateDoc, // Added for editing
+  updateDoc, 
   deleteDoc,
   doc, 
+  getDoc, // Added for fetching settings
+  setDoc, // Added for saving settings
   onSnapshot, 
   serverTimestamp, 
   query
@@ -33,7 +35,11 @@ import {
   Download,
   Palette,
   Filter,
-  Pencil // Added icon
+  Pencil,
+  Link,
+  FileUp,
+  CloudUpload,
+  Settings // Added Settings Icon
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -87,6 +93,16 @@ const compressImage = (file) => {
   });
 };
 
+// Helper: Read file as Base64 for Google Drive Upload
+const readFileAsBase64 = (file) => {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.readAsDataURL(file);
+    reader.onload = () => resolve(reader.result);
+    reader.onerror = error => reject(error);
+  });
+};
+
 export default function App() {
   // State Management
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -98,6 +114,7 @@ export default function App() {
   const [designs, setDesigns] = useState([]);
   const [loading, setLoading] = useState(true);
   const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState(''); 
   
   // Search & Filter State
   const [searchQuery, setSearchQuery] = useState('');
@@ -105,19 +122,28 @@ export default function App() {
   
   // Modals
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
-  const [isEditModalOpen, setIsEditModalOpen] = useState(false); // New Edit Modal
-  const [editingDesign, setEditingDesign] = useState(null); // Data for editing
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false); // Settings Modal
+  const [editingDesign, setEditingDesign] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   
-  // Form State (Shared for Upload & Edit)
+  // Settings State
+  const [googleScriptUrl, setGoogleScriptUrl] = useState('');
+  const [tempScriptUrl, setTempScriptUrl] = useState(''); // For input field
+
+  // Form State
   const [newDesignTitle, setNewDesignTitle] = useState('');
   const [newDesignTag, setNewDesignTag] = useState('Sublimation');
   const [newDesignColor, setNewDesignColor] = useState('Multicolor');
   const [sourceLink, setSourceLink] = useState('');
   const [previewUrl, setPreviewUrl] = useState(null);
   const [fileToUpload, setFileToUpload] = useState(null);
+  
+  // Source File Upload State
+  const [sourceFile, setSourceFile] = useState(null);
+  const [useFileUpload, setUseFileUpload] = useState(false);
 
-  const SITE_PASSWORD = '252746';
+  const SITE_PASSWORD = '866535';
 
   // Auth Effect
   useEffect(() => {
@@ -132,7 +158,7 @@ export default function App() {
     return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // Firestore Data Fetching
+  // Firestore Data Fetching (Designs)
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'designs'));
@@ -147,6 +173,24 @@ export default function App() {
     });
     return () => unsubscribe();
   }, [user]);
+
+  // Fetch Settings (Script URL)
+  useEffect(() => {
+    const fetchSettings = async () => {
+      try {
+        const docRef = doc(db, "settings", "config");
+        const docSnap = await getDoc(docRef);
+        if (docSnap.exists()) {
+          const url = docSnap.data().scriptUrl || "";
+          setGoogleScriptUrl(url);
+          setTempScriptUrl(url);
+        }
+      } catch (err) {
+        console.error("Settings Fetch Error:", err);
+      }
+    };
+    fetchSettings();
+  }, []);
 
   // Handlers
   const handlePasswordSubmit = (e) => {
@@ -180,6 +224,20 @@ export default function App() {
     }
   };
 
+  // --- SETTINGS HANDLERS ---
+  const handleSaveSettings = async () => {
+    if (!tempScriptUrl) return;
+    try {
+      await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl }, { merge: true });
+      setGoogleScriptUrl(tempScriptUrl);
+      setIsSettingsModalOpen(false);
+      alert("গুগল ড্রাইভ লিঙ্ক আপডেট হয়েছে!");
+    } catch (err) {
+      console.error("Settings Save Error:", err);
+      alert("সেভ করা সম্ভব হয়নি।");
+    }
+  };
+
   // --- EDIT HANDLERS ---
   const openEditModal = (e, design) => {
     e.stopPropagation();
@@ -194,6 +252,7 @@ export default function App() {
   const handleUpdate = async () => {
     if (!editingDesign) return;
     setUploading(true);
+    setUploadStatus('আপডেট হচ্ছে...');
     try {
       const designRef = doc(db, 'designs', editingDesign.id);
       await updateDoc(designRef, {
@@ -203,7 +262,6 @@ export default function App() {
         sourceLink: sourceLink
       });
       
-      // Reset & Close
       setIsEditModalOpen(false);
       setEditingDesign(null);
       resetForm();
@@ -212,6 +270,7 @@ export default function App() {
       alert("আপডেট সফল হয়নি।");
     } finally {
       setUploading(false);
+      setUploadStatus('');
     }
   };
 
@@ -224,26 +283,87 @@ export default function App() {
     }
   };
 
+  const handleSourceFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+      setSourceFile(file);
+    }
+  };
+
+  const uploadToGoogleDrive = async (file) => {
+    if (!googleScriptUrl) {
+      throw new Error("গুগল ড্রাইভ লিঙ্ক সেট করা নেই! সেটিংস থেকে লিঙ্ক যুক্ত করুন।");
+    }
+
+    const base64 = await readFileAsBase64(file);
+    
+    const response = await fetch(googleScriptUrl, {
+      method: "POST",
+      body: JSON.stringify({
+        filename: file.name,
+        mimeType: file.type,
+        file: base64,
+      }),
+    });
+
+    const result = await response.json();
+    if (result.status === 'success') {
+      return result.url;
+    } else {
+      throw new Error(result.message);
+    }
+  };
+
   const handleUpload = async () => {
-    if (!fileToUpload || !newDesignTitle || !sourceLink) return;
+    // Validation
+    if (!fileToUpload || !newDesignTitle) {
+      alert("ডিজাইনের নাম এবং প্রিভিউ ছবি দেওয়া বাধ্যতামূলক।");
+      return;
+    }
+    if (!useFileUpload && !sourceLink) {
+      alert("সোর্স লিঙ্ক দিন অথবা ফাইল আপলোড করুন।");
+      return;
+    }
+    if (useFileUpload && !sourceFile) {
+      alert("সোর্স ফাইল সিলেক্ট করুন।");
+      return;
+    }
+
     setUploading(true);
     try {
+      let finalSourceLink = sourceLink;
+
+      // 1. Upload Source File to Drive (if selected)
+      if (useFileUpload && sourceFile) {
+        setUploadStatus('ড্রাইভে ফাইল আপলোড হচ্ছে... (অপেক্ষা করুন)');
+        finalSourceLink = await uploadToGoogleDrive(sourceFile);
+      }
+
+      // 2. Compress Preview Image
+      setUploadStatus('প্রিভিউ ছবি প্রসেসিং হচ্ছে...');
       const compressedBase64 = await compressImage(fileToUpload);
+
+      // 3. Save to Firebase
+      setUploadStatus('ডাটাবেসে সেভ হচ্ছে...');
       await addDoc(collection(db, 'designs'), {
         title: newDesignTitle,
         tag: newDesignTag,
         color: newDesignColor,
         imageData: compressedBase64,
-        sourceLink: sourceLink,
+        sourceLink: finalSourceLink, // Stores the Drive Link
         uploaderId: user.uid,
         createdAt: serverTimestamp(),
       });
+
       setIsUploadModalOpen(false);
       resetForm();
+      alert("সফলভাবে আপলোড হয়েছে!");
     } catch (err) {
-      alert("আপলোড সফল হয়নি।");
+      console.error(err);
+      alert(`আপলোড ব্যর্থ হয়েছে: ${err.message}`);
     } finally {
       setUploading(false);
+      setUploadStatus('');
     }
   };
 
@@ -253,6 +373,8 @@ export default function App() {
     setNewDesignTitle('');
     setSourceLink('');
     setNewDesignColor('Multicolor');
+    setSourceFile(null);
+    setUseFileUpload(false);
   };
 
   const openSourceLink = (link) => {
@@ -332,11 +454,18 @@ export default function App() {
                 {isAuthenticated ? (
                 <>
                     <button 
-                    onClick={() => { resetForm(); setIsUploadModalOpen(true); }}
-                    className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
-                    title="আপলোড"
+                      onClick={() => setIsSettingsModalOpen(true)}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2.5 rounded-full border border-slate-200 transition-colors"
+                      title="সেটিংস"
                     >
-                    <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
+                      <Settings size={18} />
+                    </button>
+                    <button 
+                      onClick={() => { resetForm(); setIsUploadModalOpen(true); }}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
+                      title="আপলোড"
+                    >
+                      <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
                     </button>
                     <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
                 </>
@@ -533,6 +662,44 @@ export default function App() {
         </div>
       )}
 
+      {/* --- SETTINGS MODAL --- */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+          <div className="absolute inset-0 bg-slate-900/60 backdrop-blur-sm" onClick={() => setIsSettingsModalOpen(false)}></div>
+          <div className="bg-white rounded-3xl w-full max-w-md overflow-hidden relative z-10 shadow-2xl animate-[fadeIn_0.3s_ease-out]">
+            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
+              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
+                 <Settings size={20} className="text-slate-600"/> সেটিংস
+              </h2>
+              <button className="bg-slate-100 p-2 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors" onClick={() => setIsSettingsModalOpen(false)}>
+                 <X size={18} />
+              </button>
+            </div>
+            
+            <div className="p-6 space-y-4">
+               <div>
+                  <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">গুগল ড্রাইভ স্ক্রিপ্ট URL</label>
+                  <p className="text-xs text-slate-400 mb-2">ফাইল অটো-আপলোডের জন্য আপনার Google Apps Script এর Web App URL টি এখানে দিন।</p>
+                  <textarea 
+                     rows={4}
+                     className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-xs font-mono text-slate-600 break-all"
+                     value={tempScriptUrl}
+                     onChange={(e) => setTempScriptUrl(e.target.value)}
+                     placeholder="https://script.google.com/macros/s/..."
+                  />
+               </div>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4">
+              <button onClick={() => setIsSettingsModalOpen(false)} className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-white font-bold transition-colors">বাতিল</button>
+              <button onClick={handleSaveSettings} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg">
+                সেভ করুন
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* --- UPLOAD MODAL --- */}
       {isUploadModalOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
@@ -546,6 +713,8 @@ export default function App() {
             </div>
             
             <div className="p-6 space-y-5">
+              
+              {/* Image Uploader */}
               <div className="border-2 border-dashed border-slate-300 rounded-2xl p-6 text-center hover:border-indigo-400 hover:bg-indigo-50/30 transition-all relative group cursor-pointer">
                 <input type="file" accept="image/*" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer z-10" />
                 
@@ -567,48 +736,72 @@ export default function App() {
                 )}
               </div>
 
-              <div className="space-y-3">
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">নাম</label>
-                    <input type="text" placeholder="ডিজাইনের নাম..." className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" value={newDesignTitle} onChange={e => setNewDesignTitle(e.target.value)} />
-                 </div>
-                 <div>
-                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">লিঙ্ক</label>
-                    <input type="text" placeholder="Drive Link..." className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-sm font-mono text-indigo-600" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
-                 </div>
+              {/* Name Input */}
+              <div>
+                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-1 block">নাম</label>
+                 <input type="text" placeholder="ডিজাইনের নাম..." className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all" value={newDesignTitle} onChange={e => setNewDesignTitle(e.target.value)} />
               </div>
 
-              <div>
-                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block flex items-center gap-1"><Palette size={12}/> কালার</label>
-                 <div className="flex flex-wrap gap-2">
-                    {COLORS.map((c) => (
-                      <button 
-                        key={c.name}
-                        onClick={() => setNewDesignColor(c.name)}
-                        className={`w-8 h-8 rounded-full border-2 transition-all shadow-sm ${newDesignColor === c.name ? 'ring-2 ring-indigo-500 ring-offset-2 scale-110 border-white' : 'border-slate-100 hover:scale-110'}`}
-                        style={{ background: c.hex }}
-                        title={c.name}
+              {/* Source File Section (Toggle) */}
+              <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                <div className="flex items-center justify-between mb-3">
+                   <label className="text-xs font-bold text-slate-500 uppercase flex items-center gap-1">
+                      {useFileUpload ? <CloudUpload size={14}/> : <Link size={14}/>} সোর্স ফাইল
+                   </label>
+                   <button 
+                      onClick={() => setUseFileUpload(!useFileUpload)} 
+                      className="text-[10px] font-bold text-indigo-600 hover:underline bg-white px-2 py-1 rounded border border-indigo-100"
+                   >
+                      {useFileUpload ? 'লিঙ্ক ব্যবহার করুন' : 'ফাইল আপলোড করুন'}
+                   </button>
+                </div>
+
+                {useFileUpload ? (
+                   <div className="relative">
+                      <input 
+                         type="file" 
+                         onChange={handleSourceFileSelect}
+                         className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                       />
-                    ))}
-                 </div>
+                      <p className="text-[10px] text-slate-400 mt-2 italic">* বড় ফাইলের (৫০MB+) ক্ষেত্রে ম্যানুয়াল লিঙ্ক ব্যবহার করাই ভালো।</p>
+                   </div>
+                ) : (
+                   <input type="text" placeholder="Drive / Dropbox Link..." className="w-full p-3 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm font-mono text-indigo-600" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
+                )}
               </div>
 
-              <div>
-                 <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">ক্যাটাগরি</label>
-                 <div className="flex flex-wrap gap-2">
-                   {['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve', 'Shorts', 'Pattern'].map(t => (
-                     <button key={t} onClick={() => setNewDesignTag(t)} className={`px-3 py-1.5 rounded-lg text-xs font-bold border transition-all ${newDesignTag === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
-                   ))}
+              {/* Color & Category */}
+              <div className="flex gap-4 overflow-x-auto pb-2">
+                 <div>
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block flex items-center gap-1"><Palette size={12}/> কালার</label>
+                    <div className="flex flex-wrap gap-2 w-40">
+                       {COLORS.map((c) => (
+                         <button 
+                           key={c.name} onClick={() => setNewDesignColor(c.name)}
+                           className={`w-6 h-6 rounded-full border shadow-sm ${newDesignColor === c.name ? 'ring-2 ring-indigo-500 scale-110 border-white' : 'border-slate-200'}`}
+                           style={{ background: c.hex }} title={c.name}
+                         />
+                       ))}
+                    </div>
+                 </div>
+                 <div className="flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">ক্যাটাগরি</label>
+                    <div className="flex flex-wrap gap-2">
+                      {['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve', 'Shorts', 'Pattern'].map(t => (
+                        <button key={t} onClick={() => setNewDesignTag(t)} className={`px-2 py-1 rounded text-[10px] font-bold border ${newDesignTag === t ? 'bg-indigo-600 text-white border-indigo-600' : 'bg-white text-slate-500 border-slate-200'}`}>{t}</button>
+                      ))}
+                    </div>
                  </div>
               </div>
             </div>
 
             <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4">
               <button onClick={() => setIsUploadModalOpen(false)} className="flex-1 py-3.5 rounded-xl border border-slate-200 text-slate-600 hover:bg-white font-bold transition-colors">বাতিল</button>
-              <button onClick={handleUpload} disabled={uploading || !fileToUpload} className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 font-bold hover:bg-indigo-700 shadow-lg">
+              <button onClick={handleUpload} disabled={uploading} className="flex-1 py-3.5 bg-indigo-600 text-white rounded-xl disabled:opacity-50 flex items-center justify-center gap-2 font-bold hover:bg-indigo-700 shadow-lg">
                 {uploading ? <Loader2 className="animate-spin" size={20} /> : 'আপলোড নিশ্চিত করুন'}
               </button>
             </div>
+            {uploadStatus && <div className="absolute inset-x-0 bottom-0 bg-indigo-600 text-white text-xs font-bold text-center py-1 animate-pulse">{uploadStatus}</div>}
           </div>
         </div>
       )}
@@ -628,7 +821,6 @@ export default function App() {
             </div>
             
             <div className="p-6 space-y-5">
-              {/* Existing Image Display (Read Only) */}
               <div className="flex justify-center mb-4">
                   <img src={editingDesign?.imageData} alt="Preview" className="h-32 object-contain rounded-lg shadow-sm border border-slate-200" />
               </div>
@@ -644,21 +836,17 @@ export default function App() {
                  </div>
               </div>
 
-              {/* Color Update */}
               <div>
                  <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block flex items-center gap-1"><Palette size={12}/> কালার আপডেট করুন</label>
                  <div className="flex flex-wrap gap-2">
                     {COLORS.map((c) => (
                       <button 
-                        key={c.name}
-                        onClick={() => setNewDesignColor(c.name)}
+                        key={c.name} onClick={() => setNewDesignColor(c.name)}
                         className={`w-8 h-8 rounded-full border-2 transition-all shadow-sm ${newDesignColor === c.name ? 'ring-2 ring-indigo-500 ring-offset-2 scale-110 border-white' : 'border-slate-100 hover:scale-110'}`}
-                        style={{ background: c.hex }}
-                        title={c.name}
+                        style={{ background: c.hex }} title={c.name}
                       />
                     ))}
                  </div>
-                 <p className="text-xs text-slate-400 mt-1 ml-1">সিলেক্ট করা: <span className="font-bold text-indigo-600">{newDesignColor}</span></p>
               </div>
 
               <div>
