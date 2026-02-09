@@ -411,14 +411,52 @@ export default function App() {
     window.open(url, '_blank');
   };
 
+  // UPDATED: Downloads image with text embedded at bottom
   const downloadImageOnly = (e, imageData, title) => {
     e.stopPropagation();
-    const link = document.createElement('a');
-    link.href = imageData;
-    link.download = `${title || 'design'}.jpg`;
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
+    
+    // Load image
+    const img = new Image();
+    img.src = imageData;
+    img.crossOrigin = "anonymous"; // Important for external images (though here base64)
+
+    img.onload = () => {
+      // Create a canvas
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d');
+
+      // Setup dynamic sizing based on image width
+      const fontSize = Math.max(24, Math.floor(img.width * 0.04)); // Responsive font size
+      const padding = fontSize; 
+      const footerHeight = fontSize + padding;
+
+      // Set canvas size (Image height + Footer height)
+      canvas.width = img.width;
+      canvas.height = img.height + footerHeight;
+
+      // 1. Draw Original Image
+      ctx.drawImage(img, 0, 0);
+
+      // 2. Draw White Background for Footer
+      ctx.fillStyle = '#ffffff';
+      ctx.fillRect(0, img.height, canvas.width, footerHeight);
+
+      // 3. Draw Title Text
+      ctx.fillStyle = '#000000';
+      ctx.font = `bold ${fontSize}px sans-serif`;
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      // Center text in footer
+      ctx.fillText(title || 'HF Sublimation Design', canvas.width / 2, img.height + (footerHeight / 2));
+
+      // 4. Create Download Link
+      const link = document.createElement('a');
+      link.download = `${title || 'design'}.jpg`;
+      link.href = canvas.toDataURL('image/jpeg', 0.9); // Convert to JPEG with high quality
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+    };
   };
 
   const filteredDesigns = useMemo(() => {
