@@ -40,7 +40,7 @@ import {
   FileUp,
   CloudUpload,
   Settings,
-  AlertCircle // Added Alert Icon
+  AlertCircle 
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -73,7 +73,7 @@ const COLORS = [
   { name: 'Multicolor', hex: 'linear-gradient(to right, #ef4444, #3b82f6, #22c55e)' }
 ];
 
-// Image Compression Helper (Optimized for Speed)
+// Image Compression Helper
 const compressImage = (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -83,10 +83,9 @@ const compressImage = (file) => {
       img.src = event.target.result;
       img.onload = () => {
         const canvas = document.createElement('canvas');
-        const MAX_WIDTH = 800; // Reduced max width for faster loading
+        const MAX_WIDTH = 800; 
         const scaleSize = MAX_WIDTH / img.width;
         
-        // If image is smaller than max width, keep original size
         const finalWidth = Math.min(img.width, MAX_WIDTH);
         const finalHeight = img.width > MAX_WIDTH ? img.height * scaleSize : img.height;
 
@@ -96,14 +95,13 @@ const compressImage = (file) => {
         const ctx = canvas.getContext('2d');
         ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
         
-        // Converted to WebP format with 0.7 quality for high compression & good visual
         resolve(canvas.toDataURL('image/webp', 0.7));
       };
     };
   });
 };
 
-// Helper: Read file as Base64 for Google Drive Upload
+// Helper: Read file as Base64 (Old Google Drive Helper - Kept if needed later)
 const readFileAsBase64 = (file) => {
   return new Promise((resolve, reject) => {
     const reader = new FileReader();
@@ -119,7 +117,7 @@ export default function App() {
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [passwordInput, setPasswordInput] = useState('');
   const [passError, setPassError] = useState(false);
-  const [authError, setAuthError] = useState(null); // New state for auth errors
+  const [authError, setAuthError] = useState(null);
   
   const [user, setUser] = useState(null);
   const [designs, setDesigns] = useState([]);
@@ -156,7 +154,7 @@ export default function App() {
 
   const SITE_PASSWORD = '252746';
 
-  // Auth Effect - Fixed Error Handling
+  // Auth Effect
   useEffect(() => {
     const login = async () => {
       try {
@@ -164,25 +162,25 @@ export default function App() {
       } catch (err) {
         console.error("Auth Error:", err);
         if (err.code === 'auth/configuration-not-found') {
-          setAuthError("Firebase Console-এ Anonymous Auth চালু করা নেই। অনুগ্রহ করে Authentication সেকশনে গিয়ে এটি Enable করুন।");
+          setAuthError("Firebase Console-এ Anonymous Auth চালু করা নেই।");
         } else {
           setAuthError("সার্ভার কানেকশন এরর: " + err.message);
         }
-        setLoading(false); // Stop loading even if error
+        setLoading(false);
       }
     };
     login();
     return onAuthStateChanged(auth, (currentUser) => {
       setUser(currentUser);
       if (currentUser) {
-        setAuthError(null); // Clear error on success
+        setAuthError(null);
       }
     });
   }, []);
 
-  // Firestore Data Fetching (Designs)
+  // Firestore Data Fetching
   useEffect(() => {
-    if (!user) return; // Wait for user to be authenticated to avoid "Offline" errors
+    if (!user) return;
     
     const q = query(collection(db, 'designs'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -192,8 +190,6 @@ export default function App() {
       setLoading(false);
     }, (err) => {
       console.error("Firestore Error:", err);
-      // Don't set loading false here immediately to allow retries, 
-      // but if it persists, you might want to show an error.
       if (err.code !== 'unavailable') { 
          setLoading(false);
       }
@@ -201,9 +197,9 @@ export default function App() {
     return () => unsubscribe();
   }, [user]);
 
-  // Fetch Settings (Script URL) - Moved to wait for user
+  // Fetch Settings
   useEffect(() => {
-    if (!user) return; // Wait for auth
+    if (!user) return;
     
     const fetchSettings = async () => {
       try {
@@ -260,10 +256,10 @@ export default function App() {
       await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl }, { merge: true });
       setGoogleScriptUrl(tempScriptUrl);
       setIsSettingsModalOpen(false);
-      alert("গুগল ড্রাইভ লিঙ্ক আপডেট হয়েছে!");
+      alert("সেটিংস আপডেট হয়েছে!");
     } catch (err) {
       console.error("Settings Save Error:", err);
-      alert("সেভ করা সম্ভব হয়নি।");
+      alert("সেভ করা সম্ভব হয়নি।");
     }
   };
 
@@ -319,13 +315,39 @@ export default function App() {
     }
   };
 
+  // --- NEW: Telegram Upload Function ---
+  const uploadToTelegram = async (file) => {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    // আপনার রেন্ডার সার্ভারের লিংক
+    const SERVER_URL = "https://private-link-sender.onrender.com/upload"; 
+
+    try {
+      const response = await fetch(SERVER_URL, {
+        method: "POST",
+        body: formData,
+      });
+
+      const data = await response.json();
+
+      if (data.success) {
+        return data.link; // বটের তৈরি করা সিক্রেট লিংক
+      } else {
+        throw new Error("Telegram Upload Failed: " + (data.error || "Unknown error"));
+      }
+    } catch (error) {
+      console.error("Upload Error:", error);
+      throw error;
+    }
+  };
+
+  // Old Google Drive Upload (Kept as backup, but not used now)
   const uploadToGoogleDrive = async (file) => {
     if (!googleScriptUrl) {
-      throw new Error("গুগল ড্রাইভ লিঙ্ক সেট করা নেই! সেটিংস থেকে লিঙ্ক যুক্ত করুন।");
+      throw new Error("গুগল ড্রাইভ লিঙ্ক সেট করা নেই!");
     }
-
     const base64 = await readFileAsBase64(file);
-    
     const response = await fetch(googleScriptUrl, {
       method: "POST",
       body: JSON.stringify({
@@ -334,7 +356,6 @@ export default function App() {
         file: base64,
       }),
     });
-
     const result = await response.json();
     if (result.status === 'success') {
       return result.url;
@@ -345,7 +366,7 @@ export default function App() {
 
   const handleUpload = async () => {
     if (!fileToUpload || !newDesignTitle) {
-      alert("ডিজাইনের নাম এবং প্রিভিউ ছবি দেওয়া বাধ্যতামূলক।");
+      alert("ডিজাইনের নাম এবং প্রিভিউ ছবি দেওয়া বাধ্যতামূলক।");
       return;
     }
     if (!useFileUpload && !sourceLink) {
@@ -361,9 +382,13 @@ export default function App() {
     try {
       let finalSourceLink = sourceLink;
 
+      // যদি ইউজার ফাইল সিলেক্ট করে থাকে
       if (useFileUpload && sourceFile) {
-        setUploadStatus('ড্রাইভে ফাইল আপলোড হচ্ছে... (অপেক্ষা করুন)');
-        finalSourceLink = await uploadToGoogleDrive(sourceFile);
+        setUploadStatus('টেলিগ্রামে ফাইল আপলোড হচ্ছে... (একটু সময় দিন)');
+        
+        // --- পরিবর্তন: গুগল ড্রাইভের বদলে টেলিগ্রামে আপলোড ---
+        finalSourceLink = await uploadToTelegram(sourceFile);
+        console.log("Uploaded Link:", finalSourceLink);
       }
 
       setUploadStatus('প্রিভিউ ছবি প্রসেসিং হচ্ছে...');
@@ -382,10 +407,10 @@ export default function App() {
 
       setIsUploadModalOpen(false);
       resetForm();
-      alert("সফলভাবে আপলোড হয়েছে!");
+      alert("সফলভাবে আপলোড হয়েছে!");
     } catch (err) {
       console.error(err);
-      alert(`আপলোড ব্যর্থ হয়েছে: ${err.message}`);
+      alert(`আপলোড ব্যর্থ হয়েছে: ${err.message}`);
     } finally {
       setUploading(false);
       setUploadStatus('');
@@ -411,48 +436,39 @@ export default function App() {
     window.open(url, '_blank');
   };
 
-  // UPDATED: Downloads image with text embedded at bottom
+  // Image Download Function
   const downloadImageOnly = (e, imageData, title) => {
     e.stopPropagation();
     
-    // Load image
     const img = new Image();
     img.src = imageData;
-    img.crossOrigin = "anonymous"; // Important for external images (though here base64)
+    img.crossOrigin = "anonymous"; 
 
     img.onload = () => {
-      // Create a canvas
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d');
 
-      // Setup dynamic sizing based on image width
-      const fontSize = Math.max(24, Math.floor(img.width * 0.04)); // Responsive font size
+      const fontSize = Math.max(24, Math.floor(img.width * 0.04)); 
       const padding = fontSize; 
       const footerHeight = fontSize + padding;
 
-      // Set canvas size (Image height + Footer height)
       canvas.width = img.width;
       canvas.height = img.height + footerHeight;
 
-      // 1. Draw Original Image
       ctx.drawImage(img, 0, 0);
 
-      // 2. Draw White Background for Footer
       ctx.fillStyle = '#ffffff';
       ctx.fillRect(0, img.height, canvas.width, footerHeight);
 
-      // 3. Draw Title Text
       ctx.fillStyle = '#000000';
       ctx.font = `bold ${fontSize}px sans-serif`;
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      // Center text in footer
       ctx.fillText(title || 'HF Sublimation Design', canvas.width / 2, img.height + (footerHeight / 2));
 
-      // 4. Create Download Link
       const link = document.createElement('a');
       link.download = `${title || 'design'}.jpg`;
-      link.href = canvas.toDataURL('image/jpeg', 0.9); // Convert to JPEG with high quality
+      link.href = canvas.toDataURL('image/jpeg', 0.9);
       document.body.appendChild(link);
       link.click();
       document.body.removeChild(link);
@@ -495,7 +511,6 @@ export default function App() {
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800 selection:bg-indigo-100 selection:text-indigo-700">
       
-      {/* Error Banner if auth fails later */}
       {authError && (
         <div className="bg-red-500 text-white text-center py-2 px-4 text-sm font-bold animate-pulse">
           {authError}
@@ -593,16 +608,6 @@ export default function App() {
           </div>
 
         </div>
-
-        <!-- Google tag (gtag.js) -->
-<script async src="https://www.googletagmanager.com/gtag/js?id=G-F0N2TFY5WY"></script>
-<script>
-  window.dataLayer = window.dataLayer || [];
-  function gtag(){dataLayer.push(arguments);}
-  gtag('js', new Date());
-
-  gtag('config', 'G-F0N2TFY5WY');
-</script>
       </header>
 
       {/* --- MAIN GRID --- */}
@@ -644,47 +649,47 @@ export default function App() {
                         {design.tag}
                       </span>
                       {design.color && (
-                         <div 
-                           className="w-4 h-4 rounded-full border border-white shadow-sm" 
-                           style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}
-                           title={design.color}
-                         ></div>
+                          <div 
+                            className="w-4 h-4 rounded-full border border-white shadow-sm" 
+                            style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}
+                            title={design.color}
+                          ></div>
                       )}
                   </div>
 
                   {/* Hover Overlay */}
                   <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                     <div className="bg-white/90 backdrop-blur text-slate-800 px-4 py-2 rounded-full shadow-lg font-medium text-sm transform translate-y-2 group-hover:translate-y-0 transition-transform">
+                      <div className="bg-white/90 backdrop-blur text-slate-800 px-4 py-2 rounded-full shadow-lg font-medium text-sm transform translate-y-2 group-hover:translate-y-0 transition-transform">
                         ক্লিক করে দেখুন
-                     </div>
+                      </div>
                   </div>
                 </div>
 
                 {/* Content Area */}
                 <div className="p-5 flex flex-col flex-1">
                   <div className="flex justify-between items-start mb-4">
-                     <h3 className="font-bold text-slate-700 text-base leading-tight line-clamp-2" title={design.title}>{design.title}</h3>
-                     
-                     {isAuthenticated && (
-                       <div className="flex gap-1 -mt-1 -mr-2">
-                        {/* Edit Button */}
-                        <button 
-                           onClick={(e) => openEditModal(e, design)} 
-                           className="text-slate-300 hover:text-indigo-500 transition-colors p-1"
-                           title="এডিট করুন"
-                        >
-                           <Pencil size={16} />
-                        </button>
-                        {/* Delete Button */}
-                        <button 
-                           onClick={(e) => handleDelete(e, design.id)} 
-                           className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                           title="ডিলিট করুন"
-                        >
-                           <Trash2 size={16} />
-                        </button>
-                       </div>
-                     )}
+                      <h3 className="font-bold text-slate-700 text-base leading-tight line-clamp-2" title={design.title}>{design.title}</h3>
+                      
+                      {isAuthenticated && (
+                        <div className="flex gap-1 -mt-1 -mr-2">
+                         {/* Edit Button */}
+                         <button 
+                            onClick={(e) => openEditModal(e, design)} 
+                            className="text-slate-300 hover:text-indigo-500 transition-colors p-1"
+                            title="এডিট করুন"
+                         >
+                            <Pencil size={16} />
+                         </button>
+                         {/* Delete Button */}
+                         <button 
+                            onClick={(e) => handleDelete(e, design.id)} 
+                            className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                            title="ডিলিট করুন"
+                         >
+                            <Trash2 size={16} />
+                         </button>
+                        </div>
+                      )}
                   </div>
                   
                   <div className={`mt-auto grid gap-3 ${isAuthenticated ? 'grid-cols-2' : 'grid-cols-1'}`}>
@@ -814,7 +819,7 @@ export default function App() {
                   <div className="relative inline-block">
                      <img src={previewUrl} className="h-48 mx-auto rounded-lg shadow-sm object-contain bg-white" alt="Preview" />
                      <div className="absolute inset-0 bg-black/20 rounded-lg flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity">
-                        <p className="text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full">ছবি পরিবর্তন করুন</p>
+                       <p className="text-white text-xs font-bold bg-black/50 px-3 py-1 rounded-full">ছবি পরিবর্তন করুন</p>
                      </div>
                   </div>
                 ) : (
@@ -855,7 +860,7 @@ export default function App() {
                          onChange={handleSourceFileSelect}
                          className="block w-full text-sm text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100"
                       />
-                      <p className="text-[10px] text-slate-400 mt-2 italic">* বড় ফাইলের (৫০MB+) ক্ষেত্রে ম্যানুয়াল লিঙ্ক ব্যবহার করাই ভালো।</p>
+                      <p className="text-[10px] text-slate-400 mt-2 italic">* টেলিগ্রাম বটের মাধ্যমে ২ জিবি পর্যন্ত ফাইল আপলোড করতে পারবেন।</p>
                    </div>
                 ) : (
                    <input type="text" placeholder="Drive / Dropbox Link..." className="w-full p-3 bg-white border border-slate-200 rounded-lg outline-none focus:ring-2 focus:ring-indigo-500/20 text-sm font-mono text-indigo-600" value={sourceLink} onChange={e => setSourceLink(e.target.value)} />
