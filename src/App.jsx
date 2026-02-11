@@ -23,7 +23,8 @@ import {
 import { 
   Upload, Search, X, Image as ImageIcon, Loader2, Maximize2, Lock, Unlock, 
   Trash2, LogIn, LogOut, Download, Palette, Filter, Pencil, CloudUpload, 
-  Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye, CheckCircle, XCircle
+  Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye, CheckCircle, XCircle,
+  ArrowDownUp // Added Icon for Sorting
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -110,6 +111,10 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedColorFilter, setSelectedColorFilter] = useState('All');
   const [selectedCategory, setSelectedCategory] = useState('All');
+  const [sortOption, setSortOption] = useState('newest'); // FEATURE 5: Sorting State
+
+  // Pagination (FEATURE 4)
+  const [visibleCount, setVisibleCount] = useState(30);
 
   // Form Data (Unified State)
   const [newDesignTitle, setNewDesignTitle] = useState('');
@@ -129,6 +134,8 @@ export default function App() {
 
   // Upload Queue System (For Background Uploads)
   const [activeUploads, setActiveUploads] = useState([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadStatus, setUploadStatus] = useState('');
 
   // --- EFFECTS ---
 
@@ -144,6 +151,7 @@ export default function App() {
     const q = query(collection(db, 'designs'));
     const unsubscribe = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort initially by date desc
       items.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setDesigns(items);
       setLoading(false);
@@ -176,21 +184,45 @@ export default function App() {
     return () => unsubConfig();
   }, [user]);
 
+  // Reset pagination when filters change
+  useEffect(() => {
+    setVisibleCount(30);
+  }, [searchQuery, selectedColorFilter, selectedCategory, sortOption]);
+
   // --- COMPUTED DATA ---
   const categories = useMemo(() => {
     const cats = new Set(['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve']);
     designs.forEach(d => d.tag && cats.add(d.tag));
-    return Array.from(cats);
+    return Array.from(cats).sort();
   }, [designs]);
 
+  // FEATURE 5: Advanced Sorting Logic
   const filteredDesigns = useMemo(() => {
-    return designs.filter(d => {
-      const matchesSearch = d.title.toLowerCase().includes(searchQuery.toLowerCase()) || d.tag.toLowerCase().includes(searchQuery.toLowerCase());
+    let result = designs.filter(d => {
+      const matchesSearch = d.title?.toLowerCase().includes(searchQuery.toLowerCase()) || d.tag?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesColor = selectedColorFilter === 'All' || d.color === selectedColorFilter;
       const matchesCategory = selectedCategory === 'All' || d.tag === selectedCategory;
       return matchesSearch && matchesColor && matchesCategory;
     });
-  }, [designs, searchQuery, selectedColorFilter, selectedCategory]);
+
+    // Sorting Logic
+    if (sortOption === 'newest') {
+      result.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    } else if (sortOption === 'oldest') {
+      result.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+    } else if (sortOption === 'popular') {
+      result.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+    } else if (sortOption === 'name') {
+      result.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
+    }
+
+    return result;
+  }, [designs, searchQuery, selectedColorFilter, selectedCategory, sortOption]);
+
+  // FEATURE 4: Pagination Slice
+  const displayedDesigns = useMemo(() => {
+    return filteredDesigns.slice(0, visibleCount);
+  }, [filteredDesigns, visibleCount]);
 
   const categoryStats = useMemo(() => {
     const stats = {};
@@ -235,10 +267,10 @@ export default function App() {
       await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl }, { merge: true });
       setGoogleScriptUrl(tempScriptUrl);
       setIsSettingsModalOpen(false);
-      alert("গুগল ড্রাইভ লিঙ্ক আপডেট হয়েছে!");
+      alert("গুগল ড্রাইভ লিঙ্ক আপডেট হয়েছে!");
     } catch (err) {
       console.error("Settings Save Error:", err);
-      alert("সেভ করা সম্ভব হয়নি।");
+      alert("সেভ করা সম্ভব হয়নি।");
     }
   };
 
@@ -276,12 +308,10 @@ export default function App() {
   const handleUpdate = async () => {
     if (!editingDesign) return;
     
-    // Add to background queue
     const uploadId = Date.now();
     const newItem = { id: uploadId, title: `Update: ${newDesignTitle}`, status: 'শুরু হচ্ছে...', type: 'update' };
     setActiveUploads(prev => [...prev, newItem]);
 
-    // Local copy of data
     const updateData = {
       id: editingDesign.id,
       title: newDesignTitle,
@@ -292,12 +322,10 @@ export default function App() {
       file: sourceFile
     };
 
-    // Close Modal Immediately
     setIsEditModalOpen(false);
     setEditingDesign(null);
     resetForm();
 
-    // Async Process
     (async () => {
       const updateStatus = (status, isError = false) => {
         setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
@@ -331,12 +359,10 @@ export default function App() {
   const handleUpload = async () => {
     if (!fileToUpload || !newDesignTitle) return alert("নাম এবং ছবি দিন!");
     
-    // 1. Create Upload Queue Item
     const uploadId = Date.now();
     const newItem = { id: uploadId, title: newDesignTitle, status: 'শুরু হচ্ছে...', type: 'upload' };
     setActiveUploads(prev => [...prev, newItem]);
 
-    // 2. Local variables to capture state before reset
     const uploadData = {
       title: newDesignTitle,
       tag: newDesignTag,
@@ -348,11 +374,9 @@ export default function App() {
       uid: user.uid
     };
 
-    // 3. Close Modal & Reset Form Immediately
     setIsUploadModalOpen(false);
     resetForm();
 
-    // 4. Start Background Process
     (async () => {
       const updateStatus = (status, isError = false) => {
         setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
@@ -376,11 +400,11 @@ export default function App() {
           imageData: imgBase64,
           sourceLink: link,
           uploaderId: uploadData.uid,
+          downloads: 0,
           createdAt: serverTimestamp()
         });
         
         updateStatus('সম্পন্ন!');
-        // Auto remove success message after 3 seconds
         setTimeout(() => removeUploadItem(uploadId), 3000);
 
       } catch (err) {
@@ -439,9 +463,20 @@ export default function App() {
     }
   };
 
-  // --- RENDER HELPERS ---
-  const downloadImage = (e, img, title) => {
+  const openSourceLink = (id, link) => {
+    window.open(link, '_blank');
+    updateDoc(doc(db, 'designs', id), {
+      downloads: increment(1)
+    }).catch(e => console.log("Popularity update failed", e));
+  };
+
+  const downloadImage = (e, id, img, title) => {
     e.stopPropagation();
+    
+    updateDoc(doc(db, 'designs', id), {
+      downloads: increment(1)
+    }).catch(e => console.log("Popularity update failed", e));
+
     const image = new Image();
     image.src = img;
     image.crossOrigin = "anonymous";
@@ -611,59 +646,104 @@ export default function App() {
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
       
       {/* HEADER */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm">
-        {config.headerImage && <img src={config.headerImage} className="w-full h-32 object-cover" alt="Banner"/>}
-        
-        <div className="max-w-7xl mx-auto px-4 py-4">
-          <div className="flex flex-col md:flex-row items-center gap-4 justify-between">
-            {/* Logo */}
-            <div className="flex items-center gap-2 cursor-pointer" onClick={() => {window.scrollTo(0,0); setSelectedCategory('All'); setSelectedColorFilter('All');}}>
-              <div className="bg-gradient-to-tr from-indigo-600 to-purple-600 p-2 rounded-lg text-white"><ImageIcon size={24}/></div>
-              <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700">HF Sublimation</h1>
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm transition-all duration-300">
+        <div className="max-w-7xl mx-auto px-4 py-4 md:py-5 flex flex-col items-center gap-4">
+          
+          <div className="w-full flex items-center justify-between">
+            <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 cursor-pointer" onClick={() => {window.scrollTo(0, 0); setSelectedCategory('All'); setSelectedColorFilter('All');}}>
+                <div className="bg-gradient-to-tr from-indigo-600 to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-200">
+                    <ImageIcon size={24} />
+                </div>
+                <div>
+                    <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700 hidden sm:block">
+                    HF Sublimation
+                    </h1>
+                    <h1 className="text-xl font-bold text-indigo-700 sm:hidden">HF</h1>
+                </div>
+                </div>
             </div>
 
-            {/* Search */}
-            <div className="flex-1 w-full max-w-md relative">
-              <Search className="absolute left-3 top-2.5 text-slate-400" size={18}/>
-              <input type="text" placeholder="ডিজাইন খুঁজুন..." className="w-full pl-10 pr-4 py-2 bg-slate-100 rounded-full focus:ring-2 focus:ring-indigo-200 outline-none" value={searchQuery || ''} onChange={e => setSearchQuery(e.target.value)}/>
+            <div className="flex-1 max-w-md mx-4 relative group">
+                <Search className="absolute left-4 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
+                <input 
+                type="text" 
+                placeholder="ডিজাইন খুঁজুন..." 
+                className="w-full pl-11 pr-4 py-2.5 bg-slate-100 border-none rounded-full focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all shadow-inner outline-none text-sm font-medium"
+                value={searchQuery || ''}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                />
             </div>
 
-            {/* Actions */}
             <div className="flex items-center gap-2">
-              <div className="text-xs font-bold text-slate-500 bg-slate-100 px-3 py-1.5 rounded-full border border-slate-200 hidden sm:block">
-                মোট ফাইল: {designs.length}
-              </div>
-              
-              {isDesigner ? (
+                {isDesigner ? (
                 <>
-                  {isAdmin && <button onClick={() => setShowAdminPanel(true)} className="bg-slate-800 text-white p-2 rounded-full" title="Admin Panel"><LayoutDashboard size={18}/></button>}
-                  <button 
-                    onClick={() => setIsSettingsModalOpen(true)}
-                    className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2.5 rounded-full border border-slate-200 transition-colors"
-                    title="সেটিংস"
-                  >
-                    <Settings size={18} />
-                  </button>
-                  <button onClick={() => { resetForm(); setIsUploadModalOpen(true); }} className="bg-indigo-600 text-white px-4 py-2 rounded-full flex items-center gap-2 text-sm font-bold shadow hover:bg-indigo-700"><Upload size={16}/> আপলোড</button>
-                  <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2 rounded-full hover:bg-red-100"><LogOut size={18}/></button>
+                    {isAdmin && <button onClick={() => setShowAdminPanel(true)} className="bg-slate-800 text-white p-2 rounded-full" title="Admin Panel"><LayoutDashboard size={18}/></button>}
+                    <button 
+                      onClick={() => setIsSettingsModalOpen(true)}
+                      className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2.5 rounded-full border border-slate-200 transition-colors"
+                      title="সেটিংস"
+                    >
+                      <Settings size={18} />
+                    </button>
+                    <button 
+                      onClick={() => { resetForm(); setIsUploadModalOpen(true); }}
+                      className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
+                      title="আপলোড"
+                    >
+                      <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
+                    </button>
+                    <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
                 </>
-              ) : (
-                <button onClick={() => setShowLoginModal(true)} className="bg-slate-800 text-white px-5 py-2 rounded-full flex items-center gap-2 text-sm font-bold shadow hover:bg-slate-900"><LogIn size={16}/> লগইন</button>
-              )}
+                ) : (
+                <button 
+                    onClick={() => setShowLoginModal(true)} 
+                    className="bg-slate-800 hover:bg-slate-900 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md"
+                >
+                    <LogIn size={18} /> <span className="hidden sm:inline">লগইন</span>
+                </button>
+                )}
             </div>
           </div>
 
           {/* Filters Row */}
-          <div className="mt-4 flex flex-col sm:flex-row gap-4 overflow-x-auto pb-2 no-scrollbar">
-            {/* Color Filter (Public) */}
+          <div className="w-full overflow-x-auto pb-1 no-scrollbar flex items-center gap-4">
+            
+            {/* FEATURE 5: Sorting Dropdown */}
             <div className="flex items-center gap-2 shrink-0">
-              <span className="text-xs font-bold text-slate-400 uppercase"><Filter size={12} className="inline"/> কালার:</span>
-              <div className="flex gap-2">
-                <button onClick={() => setSelectedColorFilter('All')} className={`px-3 py-1 rounded-full text-xs font-bold border ${selectedColorFilter==='All'?'bg-slate-800 text-white':'bg-white'}`}>All</button>
-                {COLORS.map(c => (
-                  <button key={c.name} onClick={() => setSelectedColorFilter(c.name)} className={`w-6 h-6 rounded-full border ${selectedColorFilter===c.name?'ring-2 ring-indigo-500':''}`} style={{background:c.hex}} title={c.name}/>
-                ))}
-              </div>
+               <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowDownUp size={12}/> সর্টিং:</span>
+               <select 
+                 className="px-3 py-1.5 rounded-full text-xs font-bold border outline-none bg-white text-slate-600 cursor-pointer hover:border-slate-300"
+                 value={sortOption} 
+                 onChange={(e) => setSortOption(e.target.value)}
+               >
+                  <option value="newest">নতুন</option>
+                  <option value="oldest">পুরাতন</option>
+                  <option value="popular">জনপ্রিয়</option>
+                  <option value="name">নাম (A-Z)</option>
+               </select>
+            </div>
+
+            {/* Color Filter */}
+            <div className="flex items-center gap-2 shrink-0 border-l pl-4 border-slate-200">
+                <span className="text-xs font-bold text-slate-400 uppercase"><Filter size={12} className="inline"/> কালার:</span>
+                <div className="flex gap-2">
+                    <button onClick={() => setSelectedColorFilter('All')} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all shrink-0 ${selectedColorFilter === 'All' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>All</button>
+                    {COLORS.map((c) => (
+                    <button
+                        key={c.name}
+                        onClick={() => setSelectedColorFilter(c.name)}
+                        className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-2 transition-all shrink-0 ${
+                        selectedColorFilter === c.name 
+                            ? 'bg-white text-slate-800 border-indigo-500 ring-1 ring-indigo-500 shadow-sm' 
+                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
+                        }`}
+                    >
+                        <span className="w-3 h-3 rounded-full border border-black/10" style={{ background: c.hex }}></span>
+                        {c.name}
+                    </button>
+                    ))}
+                </div>
             </div>
 
             {/* Category Filter (Designer Only) */}
@@ -679,10 +759,11 @@ export default function App() {
               </div>
             )}
           </div>
+
         </div>
       </header>
 
-      {/* UPLOAD QUEUE DISPLAY (Bottom Right) */}
+      {/* UPLOAD QUEUE DISPLAY */}
       {activeUploads.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[70] flex flex-col gap-2 max-w-sm w-full">
           {activeUploads.map(item => (
@@ -702,46 +783,112 @@ export default function App() {
         </div>
       )}
 
-      {/* GALLERY */}
+      {/* --- MAIN GRID --- */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
-        {filteredDesigns.length === 0 ? (
+        {displayedDesigns.length === 0 ? (
           <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি</div>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
-            {filteredDesigns.map(design => (
-              <div key={design.id} className="bg-white rounded-xl shadow-sm border border-slate-100 overflow-hidden group hover:shadow-md transition-all">
-                <div className="relative aspect-[4/5] bg-slate-50 cursor-pointer overflow-hidden" onClick={() => setSelectedImage(design)}>
-                  <img src={design.imageData} className="w-full h-full object-contain p-2 group-hover:scale-105 transition-transform duration-500" />
-                  <div className="absolute top-2 right-2 flex flex-col gap-1 items-end">
-                    <span className="text-[10px] bg-white/90 px-2 py-1 rounded font-bold text-indigo-600 shadow-sm border">{design.tag}</span>
-                  </div>
-                </div>
-                
-                <div className="p-4">
-                  <div className="flex justify-between items-start mb-3">
-                    <h3 className="font-bold text-slate-700 truncate flex-1" title={design.title}>{design.title}</h3>
-                    {isDesigner && (
-                      <div className="flex gap-1">
-                        <button onClick={(e) => openEditModal(e, design)} className="p-1 text-slate-400 hover:text-indigo-600"><Pencil size={14}/></button>
-                        <button onClick={(e) => { e.stopPropagation(); setTargetDesign(design); setIsDeleteRequestOpen(true); }} className="p-1 text-slate-400 hover:text-red-500"><Trash2 size={14}/></button>
-                      </div>
-                    )}
-                  </div>
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
+              {displayedDesigns.map(design => (
+                <div 
+                  key={design.id} 
+                  className="bg-white rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden group transition-all duration-300 hover:-translate-y-1 flex flex-col"
+                >
                   
-                  <div className="grid grid-cols-1 gap-2">
-                    <button onClick={(e) => downloadImage(e, design.imageData, design.title)} className="bg-slate-50 text-slate-700 py-2 rounded-lg text-xs font-bold hover:bg-slate-100 border border-slate-200 flex items-center justify-center gap-2">
-                      <Download size={14}/> ছবি সেভ
-                    </button>
-                    {isDesigner && (
-                      <button onClick={() => window.open(design.sourceLink, '_blank')} className="bg-indigo-600 text-white py-2 rounded-lg text-xs font-bold hover:bg-indigo-700 flex items-center justify-center gap-2">
-                        <Unlock size={14}/> AI ফাইল
+                  {/* Image Area */}
+                  <div 
+                     className="relative w-full aspect-[4/5] bg-slate-50 overflow-hidden cursor-pointer border-b border-slate-50"
+                     onClick={() => setSelectedImage(design)}
+                  >
+                    <img 
+                      src={design.imageData} 
+                      alt={design.title} 
+                      className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" 
+                    />
+                    
+                    {/* Tag & Color Dot */}
+                    <div className="absolute top-3 right-3 flex flex-col items-end gap-1">
+                        <span className="text-[10px] bg-white/90 backdrop-blur text-indigo-600 px-2.5 py-1 rounded-md shadow-sm font-bold tracking-wide uppercase border border-indigo-50">
+                          {design.tag}
+                        </span>
+                        {design.color && (
+                           <div 
+                             className="w-4 h-4 rounded-full border border-white shadow-sm" 
+                             style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}
+                             title={design.color}
+                           ></div>
+                        )}
+                    </div>
+
+                    {/* Hover Overlay */}
+                    <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                       <div className="bg-white/90 backdrop-blur text-slate-800 px-4 py-2 rounded-full shadow-lg font-medium text-sm transform translate-y-2 group-hover:translate-y-0 transition-transform">
+                          ক্লিক করে দেখুন
+                       </div>
+                    </div>
+                  </div>
+
+                  {/* Content Area */}
+                  <div className="p-5 flex flex-col flex-1">
+                    <div className="flex justify-between items-start mb-4">
+                       <h3 className="font-bold text-slate-700 text-base leading-tight line-clamp-2" title={design.title}>{design.title}</h3>
+                       
+                       {isDesigner && (
+                         <div className="flex gap-1 -mt-1 -mr-2">
+                          <button 
+                             onClick={(e) => openEditModal(e, design)} 
+                             className="text-slate-300 hover:text-indigo-500 transition-colors p-1"
+                             title="এডিট করুন"
+                          >
+                             <Pencil size={16} />
+                          </button>
+                          <button 
+                             onClick={(e) => { e.stopPropagation(); setTargetDesign(design); setIsDeleteRequestOpen(true); }} 
+                             className="text-slate-300 hover:text-red-500 transition-colors p-1"
+                             title="ডিলিট করুন"
+                          >
+                             <Trash2 size={16} />
+                          </button>
+                         </div>
+                       )}
+                    </div>
+                    
+                    <div className="grid grid-cols-1 gap-2">
+                      <button 
+                        onClick={(e) => downloadImage(e, design.id, design.imageData, design.title)}
+                        className="bg-slate-50 text-slate-600 border border-slate-200 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-100 hover:text-indigo-600 hover:border-indigo-100 transition-all flex items-center justify-center gap-1.5"
+                      >
+                        <Download size={14} /> ছবি সেভ
                       </button>
-                    )}
+
+                      {isDesigner && (
+                        <button 
+                          onClick={() => openSourceLink(design.id, design.sourceLink)}
+                          className="py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-white shadow-sm bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200"
+                        >
+                          <Unlock size={14} />
+                          AI ফাইল
+                        </button>
+                      )}
+                    </div>
                   </div>
                 </div>
+              ))}
+            </div>
+
+            {/* FEATURE 4: Load More Button */}
+            {visibleCount < filteredDesigns.length && (
+              <div className="mt-10 text-center">
+                <button 
+                  onClick={() => setVisibleCount(prev => prev + 30)}
+                  className="bg-white border border-slate-300 text-slate-600 px-8 py-3 rounded-full font-bold hover:bg-slate-50 hover:text-indigo-600 shadow-sm transition-all"
+                >
+                  আরও ডিজাইন দেখুন ({filteredDesigns.length - visibleCount} টি বাকি)
+                </button>
               </div>
-            ))}
-          </div>
+            )}
+          </>
         )}
       </main>
 
@@ -857,7 +1004,7 @@ export default function App() {
               {/* Color */}
               <div className="flex gap-2 flex-wrap">
                 {COLORS.map(c => (
-                  <button key={c.name} onClick={() => setNewDesignColor(c.name)} className={`w-8 h-8 rounded-full border ${newDesignColor===c.name?'ring-2 ring-indigo-500 scale-110':''}`} style={{background:c.hex}} title={c.name}/>
+                  <button key={c.name} onClick={() => setNewDesignColor(c.name)} className={`w-8 h-8 rounded-full border-2 shadow-sm transition-transform ${newDesignColor===c.name?'ring-2 ring-indigo-500 scale-110 border-white':'border-slate-200 hover:scale-110'}`} style={{background:c.hex}} title={c.name}/>
                 ))}
               </div>
             </div>
@@ -866,7 +1013,7 @@ export default function App() {
               <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); }} className="flex-1 py-3 border rounded-lg font-bold">বাতিল</button>
               <button 
                 onClick={isEditModalOpen ? handleUpdate : handleUpload} 
-                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 shadow-lg"
+                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold"
               >
                 সেভ করুন
               </button>
@@ -896,8 +1043,8 @@ export default function App() {
           <button className="absolute top-4 right-4 text-white"><X size={32}/></button>
           <img src={selectedImage.imageData} className="max-h-[85vh] max-w-full rounded" onClick={e => e.stopPropagation()}/>
           <div className="absolute bottom-8 bg-white px-6 py-3 rounded-full flex gap-4" onClick={e => e.stopPropagation()}>
-            <button onClick={(e) => downloadImage(e, selectedImage.imageData, selectedImage.title)} className="flex gap-2 font-bold text-slate-800"><Download/> সেভ</button>
-            {isDesigner && <button onClick={() => window.open(selectedImage.sourceLink, '_blank')} className="flex gap-2 font-bold text-indigo-600"><Unlock/> সোর্স</button>}
+            <button onClick={(e) => downloadImage(e, selectedImage.id, selectedImage.imageData, selectedImage.title)} className="flex gap-2 font-bold text-slate-800"><Download/> সেভ</button>
+            {isDesigner && <button onClick={() => openSourceLink(selectedImage.id, selectedImage.sourceLink)} className="flex gap-2 font-bold text-indigo-600"><Unlock/> সোর্স</button>}
           </div>
         </div>
       )}
