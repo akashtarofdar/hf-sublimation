@@ -23,7 +23,7 @@ import {
 import { 
   Upload, Search, X, Image as ImageIcon, Loader2, Maximize2, Lock, Unlock, 
   Trash2, LogIn, LogOut, Download, Palette, Filter, Pencil, CloudUpload, 
-  Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye
+  Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye, CheckCircle, XCircle
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -100,7 +100,7 @@ export default function App() {
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteRequestOpen, setIsDeleteRequestOpen] = useState(false);
-  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false); // Settings Modal State
+  const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false); 
   const [deleteReason, setDeleteReason] = useState('');
   const [targetDesign, setTargetDesign] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
@@ -127,8 +127,8 @@ export default function App() {
   const [sourceFile, setSourceFile] = useState(null);
   const [useFileUpload, setUseFileUpload] = useState(false);
 
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState('');
+  // Upload Queue System (For Background Uploads)
+  const [activeUploads, setActiveUploads] = useState([]);
 
   // --- EFFECTS ---
 
@@ -155,24 +155,18 @@ export default function App() {
   useEffect(() => {
     if (!user) return;
     const configRef = doc(db, 'settings', 'config');
-    
-    // Listen to config changes
     const unsubConfig = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setConfig(prev => ({ ...prev, ...data }));
-        
-        // Update script URL if exists
         const url = data.scriptUrl || "";
         setGoogleScriptUrl(url);
         setTempScriptUrl(url);
       } else {
-        // Initialize if not exists
         setDoc(configRef, config, { merge: true });
       }
     });
 
-    // Increment View Count Once per session
     const viewed = sessionStorage.getItem('viewed');
     if (!viewed) {
       updateDoc(configRef, { totalViews: increment(1) }).catch(() => {});
@@ -184,7 +178,7 @@ export default function App() {
 
   // --- COMPUTED DATA ---
   const categories = useMemo(() => {
-    const cats = new Set(['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve']); // Default
+    const cats = new Set(['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve']);
     designs.forEach(d => d.tag && cats.add(d.tag));
     return Array.from(cats);
   }, [designs]);
@@ -236,7 +230,6 @@ export default function App() {
     setShowAdminPanel(false);
   };
 
-  // --- SETTINGS HANDLERS ---
   const handleSaveSettings = async () => {
     try {
       await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl }, { merge: true });
@@ -282,69 +275,122 @@ export default function App() {
 
   const handleUpdate = async () => {
     if (!editingDesign) return;
-    setUploading(true);
-    setUploadStatus('আপডেট হচ্ছে...');
-    try {
-      const updates = {
-        title: newDesignTitle,
-        tag: newDesignTag,
-        color: newDesignColor,
-        sourceLink: sourceLink
-      };
-      
-      if (useFileUpload && sourceFile) {
-         setUploadStatus('নতুন সোর্স ফাইল আপলোড হচ্ছে...');
-         updates.sourceLink = await uploadToTelegram(sourceFile);
-      }
+    
+    // Add to background queue
+    const uploadId = Date.now();
+    const newItem = { id: uploadId, title: `Update: ${newDesignTitle}`, status: 'শুরু হচ্ছে...', type: 'update' };
+    setActiveUploads(prev => [...prev, newItem]);
 
-      await updateDoc(doc(db, 'designs', editingDesign.id), updates);
-      
-      setIsEditModalOpen(false);
-      setEditingDesign(null);
-      resetForm();
-      alert("আপডেট হয়েছে!");
-    } catch (err) {
-      console.error("Update Error:", err);
-      alert("আপডেট সফল হয়নি।");
-    } finally {
-      setUploading(false);
-      setUploadStatus('');
-    }
+    // Local copy of data
+    const updateData = {
+      id: editingDesign.id,
+      title: newDesignTitle,
+      tag: newDesignTag,
+      color: newDesignColor,
+      sourceLink: sourceLink,
+      useFile: useFileUpload,
+      file: sourceFile
+    };
+
+    // Close Modal Immediately
+    setIsEditModalOpen(false);
+    setEditingDesign(null);
+    resetForm();
+
+    // Async Process
+    (async () => {
+      const updateStatus = (status, isError = false) => {
+        setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
+      };
+
+      try {
+        const updates = {
+          title: updateData.title,
+          tag: updateData.tag,
+          color: updateData.color,
+          sourceLink: updateData.sourceLink
+        };
+        
+        if (updateData.useFile && updateData.file) {
+           updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
+           updates.sourceLink = await uploadToTelegram(updateData.file);
+        }
+
+        updateStatus('ডাটাবেস আপডেট হচ্ছে...');
+        await updateDoc(doc(db, 'designs', updateData.id), updates);
+        
+        updateStatus('সম্পন্ন!');
+        setTimeout(() => removeUploadItem(uploadId), 3000);
+      } catch (err) {
+        console.error("Update Error:", err);
+        updateStatus('ব্যর্থ: ' + err.message, true);
+      }
+    })();
   };
 
   const handleUpload = async () => {
     if (!fileToUpload || !newDesignTitle) return alert("নাম এবং ছবি দিন!");
-    setUploading(true);
     
-    try {
-      let link = sourceLink;
-      if (useFileUpload && sourceFile) {
-        setUploadStatus('সোর্স ফাইল আপলোড হচ্ছে...');
-        link = await uploadToTelegram(sourceFile);
+    // 1. Create Upload Queue Item
+    const uploadId = Date.now();
+    const newItem = { id: uploadId, title: newDesignTitle, status: 'শুরু হচ্ছে...', type: 'upload' };
+    setActiveUploads(prev => [...prev, newItem]);
+
+    // 2. Local variables to capture state before reset
+    const uploadData = {
+      title: newDesignTitle,
+      tag: newDesignTag,
+      color: newDesignColor,
+      sourceLink: sourceLink,
+      useFile: useFileUpload,
+      sourceFileObj: sourceFile,
+      previewFileObj: fileToUpload,
+      uid: user.uid
+    };
+
+    // 3. Close Modal & Reset Form Immediately
+    setIsUploadModalOpen(false);
+    resetForm();
+
+    // 4. Start Background Process
+    (async () => {
+      const updateStatus = (status, isError = false) => {
+        setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
+      };
+
+      try {
+        let link = uploadData.sourceLink;
+        if (uploadData.useFile && uploadData.sourceFileObj) {
+          updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
+          link = await uploadToTelegram(uploadData.sourceFileObj);
+        }
+
+        updateStatus('প্রিভিউ প্রসেসিং...');
+        const imgBase64 = await compressImage(uploadData.previewFileObj); 
+
+        updateStatus('ডাটাবেসে সেভ হচ্ছে...');
+        await addDoc(collection(db, 'designs'), {
+          title: uploadData.title,
+          tag: uploadData.tag,
+          color: uploadData.color,
+          imageData: imgBase64,
+          sourceLink: link,
+          uploaderId: uploadData.uid,
+          createdAt: serverTimestamp()
+        });
+        
+        updateStatus('সম্পন্ন!');
+        // Auto remove success message after 3 seconds
+        setTimeout(() => removeUploadItem(uploadId), 3000);
+
+      } catch (err) {
+        updateStatus('ব্যর্থ: ' + err.message, true);
       }
+    })();
+  };
 
-      setUploadStatus('প্রিভিউ প্রসেসিং...');
-      const imgBase64 = await compressImage(fileToUpload); 
-
-      await addDoc(collection(db, 'designs'), {
-        title: newDesignTitle,
-        tag: newDesignTag,
-        color: newDesignColor,
-        imageData: imgBase64,
-        sourceLink: link,
-        uploaderId: user.uid,
-        createdAt: serverTimestamp()
-      });
-      
-      setIsUploadModalOpen(false);
-      resetForm();
-      alert("আপলোড সফল!");
-    } catch (err) {
-      alert("Error: " + err.message);
-    } finally {
-      setUploading(false);
-      setUploadStatus('');
-    }
+  const removeUploadItem = (id) => {
+    setActiveUploads(prev => prev.filter(item => item.id !== id));
   };
 
   const resetForm = () => {
@@ -636,6 +682,26 @@ export default function App() {
         </div>
       </header>
 
+      {/* UPLOAD QUEUE DISPLAY (Bottom Right) */}
+      {activeUploads.length > 0 && (
+        <div className="fixed bottom-4 right-4 z-[70] flex flex-col gap-2 max-w-sm w-full">
+          {activeUploads.map(item => (
+            <div key={item.id} className={`bg-white p-3 rounded-lg shadow-xl border flex items-center justify-between gap-3 animate-in slide-in-from-right fade-in duration-300 ${item.isComplete ? 'border-green-500 bg-green-50' : item.isError ? 'border-red-500 bg-red-50' : 'border-indigo-100'}`}>
+              <div className="flex items-center gap-3 overflow-hidden">
+                {item.isComplete ? <CheckCircle className="text-green-600 shrink-0" size={20}/> : 
+                 item.isError ? <XCircle className="text-red-600 shrink-0" size={20}/> :
+                 <Loader2 className="animate-spin text-indigo-600 shrink-0" size={20}/>}
+                <div className="overflow-hidden">
+                  <p className="text-sm font-bold text-slate-700 truncate">{item.title}</p>
+                  <p className={`text-xs ${item.isComplete ? 'text-green-600' : item.isError ? 'text-red-500' : 'text-slate-500'}`}>{item.status}</p>
+                </div>
+              </div>
+              <button onClick={() => removeUploadItem(item.id)} className="text-slate-400 hover:text-slate-600"><X size={16}/></button>
+            </div>
+          ))}
+        </div>
+      )}
+
       {/* GALLERY */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {filteredDesigns.length === 0 ? (
@@ -798,8 +864,11 @@ export default function App() {
 
             <div className="flex gap-4 mt-6">
               <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); }} className="flex-1 py-3 border rounded-lg font-bold">বাতিল</button>
-              <button onClick={isEditModalOpen ? handleUpdate : handleUpload} disabled={uploading} className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold">
-                {uploading ? uploadStatus || 'প্রসেসিং...' : 'সেভ করুন'}
+              <button 
+                onClick={isEditModalOpen ? handleUpdate : handleUpload} 
+                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700 shadow-lg"
+              >
+                সেভ করুন
               </button>
             </div>
           </div>
