@@ -24,7 +24,7 @@ import {
   Upload, Search, X, Image as ImageIcon, Loader2, Maximize2, Lock, Unlock, 
   Trash2, LogIn, LogOut, Download, Palette, Filter, Pencil, CloudUpload, 
   Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye, CheckCircle, XCircle,
-  ArrowDownUp // Added Icon for Sorting
+  ArrowDownUp, Link as LinkIcon, FileImage // Added Icons
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -111,9 +111,9 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedColorFilter, setSelectedColorFilter] = useState('All');
   const [selectedCategory, setSelectedCategory] = useState('All');
-  const [sortOption, setSortOption] = useState('newest'); // FEATURE 5: Sorting State
+  const [sortOption, setSortOption] = useState('newest');
 
-  // Pagination (FEATURE 4)
+  // Pagination
   const [visibleCount, setVisibleCount] = useState(30);
 
   // Form Data (Unified State)
@@ -124,6 +124,10 @@ export default function App() {
   const [previewUrl, setPreviewUrl] = useState(null);
   const [fileToUpload, setFileToUpload] = useState(null);
   
+  // NEW: Image Source Type State (File vs Link)
+  const [useImageLink, setUseImageLink] = useState(false);
+  const [imageLinkInput, setImageLinkInput] = useState('');
+  
   // Settings State
   const [googleScriptUrl, setGoogleScriptUrl] = useState('');
   const [tempScriptUrl, setTempScriptUrl] = useState('');
@@ -132,7 +136,7 @@ export default function App() {
   const [sourceFile, setSourceFile] = useState(null);
   const [useFileUpload, setUseFileUpload] = useState(false);
 
-  // Upload Queue System (For Background Uploads)
+  // Upload Queue System
   const [activeUploads, setActiveUploads] = useState([]);
   const [uploading, setUploading] = useState(false);
   const [uploadStatus, setUploadStatus] = useState('');
@@ -196,7 +200,6 @@ export default function App() {
     return Array.from(cats).sort();
   }, [designs]);
 
-  // FEATURE 5: Advanced Sorting Logic
   const filteredDesigns = useMemo(() => {
     let result = designs.filter(d => {
       const matchesSearch = d.title?.toLowerCase().includes(searchQuery.toLowerCase()) || d.tag?.toLowerCase().includes(searchQuery.toLowerCase());
@@ -219,7 +222,6 @@ export default function App() {
     return result;
   }, [designs, searchQuery, selectedColorFilter, selectedCategory, sortOption]);
 
-  // FEATURE 4: Pagination Slice
   const displayedDesigns = useMemo(() => {
     return filteredDesigns.slice(0, visibleCount);
   }, [filteredDesigns, visibleCount]);
@@ -299,9 +301,11 @@ export default function App() {
     setNewDesignColor(design.color || 'Multicolor');
     setSourceLink(design.sourceLink || '');
     setFileToUpload(null);
-    setPreviewUrl(null);
+    setPreviewUrl(null); // Edit logic keeps old image unless replaced
     setSourceFile(null);
     setUseFileUpload(false);
+    // Note: Editing Image via Link is not implemented in this simpler flow to avoid complexity, 
+    // but the user can delete and re-upload if needed.
     setIsEditModalOpen(true);
   };
 
@@ -357,7 +361,12 @@ export default function App() {
   };
 
   const handleUpload = async () => {
-    if (!fileToUpload || !newDesignTitle) return alert("নাম এবং ছবি দিন!");
+    // Check validation based on mode
+    if (useImageLink) {
+        if (!imageLinkInput || !newDesignTitle) return alert("নাম এবং ইমেজের লিংক দিন!");
+    } else {
+        if (!fileToUpload || !newDesignTitle) return alert("নাম এবং ছবি আপলোড করুন!");
+    }
     
     const uploadId = Date.now();
     const newItem = { id: uploadId, title: newDesignTitle, status: 'শুরু হচ্ছে...', type: 'upload' };
@@ -371,6 +380,8 @@ export default function App() {
       useFile: useFileUpload,
       sourceFileObj: sourceFile,
       previewFileObj: fileToUpload,
+      imageLink: imageLinkInput,
+      isLinkMode: useImageLink,
       uid: user.uid
     };
 
@@ -389,15 +400,24 @@ export default function App() {
           link = await uploadToTelegram(uploadData.sourceFileObj);
         }
 
-        updateStatus('প্রিভিউ প্রসেসিং...');
-        const imgBase64 = await compressImage(uploadData.previewFileObj); 
+        let imgDataToSave = '';
+
+        if (uploadData.isLinkMode) {
+             // Use Direct Link
+             updateStatus('ইমেজ লিংক প্রসেসিং...');
+             imgDataToSave = uploadData.imageLink;
+        } else {
+             // Compress File
+             updateStatus('প্রিভিউ প্রসেসিং...');
+             imgDataToSave = await compressImage(uploadData.previewFileObj); 
+        }
 
         updateStatus('ডাটাবেসে সেভ হচ্ছে...');
         await addDoc(collection(db, 'designs'), {
           title: uploadData.title,
           tag: uploadData.tag,
           color: uploadData.color,
-          imageData: imgBase64,
+          imageData: imgDataToSave, // This can now be Base64 OR a URL
           sourceLink: link,
           uploaderId: uploadData.uid,
           downloads: 0,
@@ -426,6 +446,8 @@ export default function App() {
     setSourceLink('');
     setSourceFile(null);
     setUseFileUpload(false);
+    setUseImageLink(false);
+    setImageLinkInput('');
   };
 
   const submitDeleteRequest = async () => {
@@ -453,7 +475,14 @@ export default function App() {
     if (file && file.type.startsWith('image/')) {
       setFileToUpload(file);
       setPreviewUrl(URL.createObjectURL(file));
+      setUseImageLink(false);
     }
+  };
+  
+  const handleImageLinkChange = (e) => {
+      const url = e.target.value;
+      setImageLinkInput(url);
+      setPreviewUrl(url); // Show preview from link
   };
 
   const handleSourceFileSelect = (e) => {
@@ -805,6 +834,7 @@ export default function App() {
                       src={design.imageData} 
                       alt={design.title} 
                       className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" 
+                      loading="lazy"
                     />
                     
                     {/* Tag & Color Dot */}
@@ -958,13 +988,49 @@ export default function App() {
           <div className="bg-white p-6 rounded-2xl w-full max-w-lg h-[90vh] overflow-y-auto relative">
             <h2 className="text-lg font-bold mb-4">{isEditModalOpen ? 'এডিট ডিজাইন' : 'নতুন আপলোড'}</h2>
             <div className="space-y-4">
-              {/* Image Input (Only for upload) */}
+              
+              {/* Image Input Section (Enhanced with Tabs) */}
               {isUploadModalOpen && (
-                <div className="border-2 border-dashed rounded-xl p-4 text-center relative">
-                  <input type="file" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                  {previewUrl ? (
-                    <img src={previewUrl} className="h-32 mx-auto object-contain" />
-                  ) : <div className="py-8 text-slate-400"><CloudUpload className="mx-auto mb-2"/> ছবি দিন</div>}
+                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
+                    <div className="flex gap-2 mb-4 bg-white p-1 rounded-lg border border-slate-200">
+                        <button 
+                            onClick={() => { setUseImageLink(false); setPreviewUrl(null); setImageLinkInput(''); }}
+                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${!useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <FileImage size={14}/> ফাইল আপলোড
+                        </button>
+                        <button 
+                            onClick={() => { setUseImageLink(true); setPreviewUrl(null); setFileToUpload(null); }}
+                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
+                        >
+                            <LinkIcon size={14}/> ইমেজ লিংক
+                        </button>
+                    </div>
+
+                    {!useImageLink ? (
+                        <div className="border-2 border-dashed border-indigo-200 bg-white rounded-xl p-4 text-center relative hover:border-indigo-400 transition-colors">
+                            <input type="file" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                            {previewUrl ? (
+                                <img src={previewUrl} className="h-32 mx-auto object-contain rounded" />
+                            ) : <div className="py-8 text-slate-400"><CloudUpload className="mx-auto mb-2 text-indigo-400"/> ছবি সিলেক্ট করুন</div>}
+                        </div>
+                    ) : (
+                        <div>
+                            <input 
+                                type="text" 
+                                placeholder="ছবির ডাইরেক্ট লিংক পেস্ট করুন (URL)..." 
+                                className="w-full p-3 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
+                                value={imageLinkInput}
+                                onChange={handleImageLinkChange}
+                            />
+                            {previewUrl && (
+                                <div className="mt-3 bg-white p-2 rounded border text-center">
+                                    <p className="text-xs text-slate-400 mb-1">প্রিভিউ</p>
+                                    <img src={previewUrl} className="h-32 mx-auto object-contain rounded" onError={(e) => e.target.style.display='none'}/>
+                                </div>
+                            )}
+                        </div>
+                    )}
                 </div>
               )}
 
@@ -982,7 +1048,7 @@ export default function App() {
               {/* Source Link or File */}
               <div className="bg-slate-50 p-3 rounded-lg border">
                 <div className="flex justify-between mb-2">
-                  <label className="text-xs font-bold">সোর্স ফাইল</label>
+                  <label className="text-xs font-bold">সোর্স ফাইল (AI/PSD)</label>
                   <button 
                     type="button" 
                     onClick={(e) => {
@@ -1013,7 +1079,7 @@ export default function App() {
               <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); }} className="flex-1 py-3 border rounded-lg font-bold">বাতিল</button>
               <button 
                 onClick={isEditModalOpen ? handleUpdate : handleUpload} 
-                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold"
+                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700"
               >
                 সেভ করুন
               </button>
