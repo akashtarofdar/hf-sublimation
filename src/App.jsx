@@ -10,21 +10,19 @@ import {
   collection, 
   addDoc, 
   updateDoc, 
-  deleteDoc,
   doc, 
-  getDoc, 
   setDoc, 
   onSnapshot, 
   serverTimestamp, 
   query,
   increment,
-  where
+  deleteDoc
 } from 'firebase/firestore';
 import { 
-  Upload, Search, X, Image as ImageIcon, Loader2, Maximize2, Lock, Unlock, 
+  Upload, Search, X, Image as ImageIcon, Loader2, Lock, Unlock, 
   Trash2, LogIn, LogOut, Download, Palette, Filter, Pencil, CloudUpload, 
-  Settings, AlertCircle, LayoutDashboard, Bell, BarChart3, Users, ImagePlus, ShieldCheck, Eye, CheckCircle, XCircle,
-  ArrowDownUp, Link as LinkIcon, FileImage // Added Icons
+  Settings, LayoutDashboard, CheckCircle, XCircle,
+  ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -38,12 +36,10 @@ const firebaseConfig = {
   measurementId: "G-F0N2TFY5WY"
 };
 
-// Initialize Firebase
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Helper Data
 const COLORS = [
   { name: 'Red', hex: '#ef4444' }, { name: 'Blue', hex: '#3b82f6' }, { name: 'Green', hex: '#22c55e' },
   { name: 'Yellow', hex: '#eab308' }, { name: 'Black', hex: '#1e293b' }, { name: 'White', hex: '#f8fafc' },
@@ -51,7 +47,6 @@ const COLORS = [
   { name: 'Multicolor', hex: 'linear-gradient(to right, #ef4444, #3b82f6, #22c55e)' }
 ];
 
-// Image Compression Helper
 const compressImage = (file) => {
   return new Promise((resolve) => {
     const reader = new FileReader();
@@ -76,104 +71,86 @@ const compressImage = (file) => {
 };
 
 export default function App() {
-  // --- STATE MANAGEMENT ---
   const [user, setUser] = useState(null);
   const [designs, setDesigns] = useState([]);
+  const [deleteRequests, setDeleteRequests] = useState([]);
   const [loading, setLoading] = useState(true);
-  
-  // Roles & Auth
   const [isDesigner, setIsDesigner] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginType, setLoginType] = useState('designer'); 
-  
-  // Inputs
   const [loginInput, setLoginInput] = useState({ user: '', pass: '' });
-  const [config, setConfig] = useState({
-    designerPass: '252746',
-    adminUser: 'akashumu',
-    adminPass: '627425274',
-    headerImage: '',
-    totalViews: 0
-  });
+  const [config, setConfig] = useState({ designerPass: '252746', adminUser: 'akashumu', adminPass: '627425274', headerImage: '', totalViews: 0 });
 
-  // Modals & Features
   const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [isDeleteRequestOpen, setIsDeleteRequestOpen] = useState(false);
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false); 
-  const [deleteReason, setDeleteReason] = useState('');
   const [targetDesign, setTargetDesign] = useState(null);
   const [selectedImage, setSelectedImage] = useState(null);
   const [showAdminPanel, setShowAdminPanel] = useState(false);
 
-  // Search & Filter
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedColorFilter, setSelectedColorFilter] = useState('All');
   const [selectedCategory, setSelectedCategory] = useState('All');
   const [sortOption, setSortOption] = useState('newest');
-
-  // Pagination
   const [visibleCount, setVisibleCount] = useState(30);
 
-  // Form Data (Unified State)
+  // Form Data
   const [newDesignTitle, setNewDesignTitle] = useState('');
   const [newDesignTag, setNewDesignTag] = useState('Sublimation');
+  const [isCustomCategory, setIsCustomCategory] = useState(false); 
   const [newDesignColor, setNewDesignColor] = useState('Multicolor');
   const [sourceLink, setSourceLink] = useState('');
   const [previewUrl, setPreviewUrl] = useState(null);
   const [fileToUpload, setFileToUpload] = useState(null);
-  
-  // NEW: Image Source Type State (File vs Link)
   const [useImageLink, setUseImageLink] = useState(false);
   const [imageLinkInput, setImageLinkInput] = useState('');
-  
-  // Settings State
-  const [googleScriptUrl, setGoogleScriptUrl] = useState('');
-  const [tempScriptUrl, setTempScriptUrl] = useState('');
-  
-  // Source File Upload State
   const [sourceFile, setSourceFile] = useState(null);
   const [useFileUpload, setUseFileUpload] = useState(false);
-
-  // Upload Queue System
   const [activeUploads, setActiveUploads] = useState([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadStatus, setUploadStatus] = useState('');
+  const [tempScriptUrl, setTempScriptUrl] = useState('');
+  const [deleteReason, setDeleteReason] = useState('');
 
-  // --- EFFECTS ---
-
-  // 1. Auth & Initial Load
   useEffect(() => {
-    signInAnonymously(auth).catch(console.error);
+    const initAuth = async () => {
+      try {
+        await signInAnonymously(auth);
+      } catch (err) { console.error(err); }
+    };
+    initAuth();
     return onAuthStateChanged(auth, setUser);
   }, []);
 
-  // 2. Fetch Designs
   useEffect(() => {
     if (!user) return;
     const q = query(collection(db, 'designs'));
-    const unsubscribe = onSnapshot(q, (snapshot) => {
+    const unsub = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort initially by date desc
-      items.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setDesigns(items);
       setLoading(false);
-    });
-    return () => unsubscribe();
+    }, (err) => console.error(err));
+    return () => unsub();
   }, [user]);
 
-  // 3. Fetch Config & Increment Views
+  useEffect(() => {
+    if (!user || !isAdmin) return;
+    const q = query(collection(db, 'deleteRequests'));
+    const unsub = onSnapshot(q, (snapshot) => {
+      const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      setDeleteRequests(items);
+    });
+    return () => unsub();
+  }, [user, isAdmin]);
+
   useEffect(() => {
     if (!user) return;
     const configRef = doc(db, 'settings', 'config');
-    const unsubConfig = onSnapshot(configRef, (docSnap) => {
+    const unsub = onSnapshot(configRef, (docSnap) => {
       if (docSnap.exists()) {
         const data = docSnap.data();
         setConfig(prev => ({ ...prev, ...data }));
-        const url = data.scriptUrl || "";
-        setGoogleScriptUrl(url);
-        setTempScriptUrl(url);
+        setTempScriptUrl(data.scriptUrl || "");
       } else {
         setDoc(configRef, config, { merge: true });
       }
@@ -184,16 +161,9 @@ export default function App() {
       updateDoc(configRef, { totalViews: increment(1) }).catch(() => {});
       sessionStorage.setItem('viewed', 'true');
     }
-
-    return () => unsubConfig();
+    return () => unsub();
   }, [user]);
 
-  // Reset pagination when filters change
-  useEffect(() => {
-    setVisibleCount(30);
-  }, [searchQuery, selectedColorFilter, selectedCategory, sortOption]);
-
-  // --- COMPUTED DATA ---
   const categories = useMemo(() => {
     const cats = new Set(['Sublimation', 'Full Sleeve', 'Collar', 'Half Sleeve']);
     designs.forEach(d => d.tag && cats.add(d.tag));
@@ -207,305 +177,178 @@ export default function App() {
       const matchesCategory = selectedCategory === 'All' || d.tag === selectedCategory;
       return matchesSearch && matchesColor && matchesCategory;
     });
-
-    // Sorting Logic
-    if (sortOption === 'newest') {
-      result.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
-    } else if (sortOption === 'oldest') {
-      result.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
-    } else if (sortOption === 'popular') {
-      result.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
-    } else if (sortOption === 'name') {
-      result.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
-    }
-
+    if (sortOption === 'newest') result.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
+    else if (sortOption === 'oldest') result.sort((a, b) => (a.createdAt?.seconds || 0) - (b.createdAt?.seconds || 0));
+    else if (sortOption === 'popular') result.sort((a, b) => (b.downloads || 0) - (a.downloads || 0));
+    else if (sortOption === 'name') result.sort((a, b) => (a.title || '').localeCompare(b.title || ''));
     return result;
   }, [designs, searchQuery, selectedColorFilter, selectedCategory, sortOption]);
 
-  const displayedDesigns = useMemo(() => {
-    return filteredDesigns.slice(0, visibleCount);
-  }, [filteredDesigns, visibleCount]);
-
-  const categoryStats = useMemo(() => {
-    const stats = {};
-    designs.forEach(d => {
-      stats[d.tag] = (stats[d.tag] || 0) + 1;
-    });
-    return stats;
-  }, [designs]);
-
-  // --- ACTIONS ---
+  const displayedDesigns = useMemo(() => filteredDesigns.slice(0, visibleCount), [filteredDesigns, visibleCount]);
 
   const handleLogin = (e) => {
     e.preventDefault();
     if (loginType === 'admin') {
       if (loginInput.user === config.adminUser && loginInput.pass === config.adminPass) {
-        setIsAdmin(true);
-        setIsDesigner(true);
-        setShowAdminPanel(true);
-        setShowLoginModal(false);
-      } else {
-        alert("ভুল ইউজারনেম বা পাসওয়ার্ড!");
-      }
+        setIsAdmin(true); setIsDesigner(true); setShowLoginModal(false);
+      } else alert("ভুল ইউজারনেম বা পাসওয়ার্ড!");
     } else {
       if (loginInput.pass === config.designerPass) {
-        setIsDesigner(true);
-        setShowLoginModal(false);
-      } else {
-        alert("ভুল পাসওয়ার্ড!");
-      }
+        setIsDesigner(true); setShowLoginModal(false);
+      } else alert("ভুল পাসওয়ার্ড!");
     }
     setLoginInput({ user: '', pass: '' });
-  };
-
-  const handleLogout = () => {
-    setIsDesigner(false);
-    setIsAdmin(false);
-    setShowAdminPanel(false);
-  };
-
-  const handleSaveSettings = async () => {
-    try {
-      await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl }, { merge: true });
-      setGoogleScriptUrl(tempScriptUrl);
-      setIsSettingsModalOpen(false);
-      alert("গুগল ড্রাইভ লিঙ্ক আপডেট হয়েছে!");
-    } catch (err) {
-      console.error("Settings Save Error:", err);
-      alert("সেভ করা সম্ভব হয়নি।");
-    }
   };
 
   const uploadToTelegram = async (file) => {
     const data = new FormData();
     data.append("file", file);
-    try {
-      const res = await fetch("https://private-link-sender.onrender.com/upload", { method: "POST", body: data });
-      const json = await res.json();
-      if (json.success) return json.link;
-      throw new Error("Upload Failed");
-    } catch (e) {
-      console.error(e);
-      throw e;
-    }
+    const res = await fetch("https://private-link-sender.onrender.com/upload", { method: "POST", body: data });
+    const json = await res.json();
+    if (json.success) return json.link;
+    throw new Error("ফাইল ৫০ এমবির বেশি হতে পারে।");
   };
 
-  // --- EDIT HANDLERS ---
-  const [editingDesign, setEditingDesign] = useState(null);
+  const resetForm = () => {
+    setFileToUpload(null); setPreviewUrl(null); setNewDesignTitle(''); setNewDesignTag('Sublimation'); setIsCustomCategory(false);
+    setNewDesignColor('Multicolor'); setSourceLink(''); setSourceFile(null); setUseFileUpload(false);
+    setUseImageLink(false); setImageLinkInput(''); setTargetDesign(null); setDeleteReason('');
+  };
 
   const openEditModal = (e, design) => {
-    e.stopPropagation();
-    setEditingDesign(design);
+    if (e) e.stopPropagation();
+    setTargetDesign(design);
     setNewDesignTitle(design.title || '');
     setNewDesignTag(design.tag || 'Sublimation');
     setNewDesignColor(design.color || 'Multicolor');
     setSourceLink(design.sourceLink || '');
-    setFileToUpload(null);
-    setPreviewUrl(null); // Edit logic keeps old image unless replaced
-    setSourceFile(null);
-    setUseFileUpload(false);
-    // Note: Editing Image via Link is not implemented in this simpler flow to avoid complexity, 
-    // but the user can delete and re-upload if needed.
+    setPreviewUrl(design.imageData || null);
     setIsEditModalOpen(true);
   };
 
-  const handleUpdate = async () => {
-    if (!editingDesign) return;
-    
-    const uploadId = Date.now();
-    const newItem = { id: uploadId, title: `Update: ${newDesignTitle}`, status: 'শুরু হচ্ছে...', type: 'update' };
-    setActiveUploads(prev => [...prev, newItem]);
-
-    const updateData = {
-      id: editingDesign.id,
-      title: newDesignTitle,
-      tag: newDesignTag,
-      color: newDesignColor,
-      sourceLink: sourceLink,
-      useFile: useFileUpload,
-      file: sourceFile
+  const handleUpload = async (retryData = null) => {
+    const activeData = retryData || { 
+        title: newDesignTitle, 
+        tag: newDesignTag, 
+        color: newDesignColor, 
+        sourceLink, 
+        useFileUpload, 
+        sourceFile, 
+        fileToUpload, 
+        imageLinkInput, 
+        useImageLink, 
+        imageData: previewUrl 
     };
 
-    setIsEditModalOpen(false);
-    setEditingDesign(null);
-    resetForm();
-
-    (async () => {
-      const updateStatus = (status, isError = false) => {
-        setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
-      };
-
-      try {
-        const updates = {
-          title: updateData.title,
-          tag: updateData.tag,
-          color: updateData.color,
-          sourceLink: updateData.sourceLink
-        };
-        
-        if (updateData.useFile && updateData.file) {
-           updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
-           updates.sourceLink = await uploadToTelegram(updateData.file);
-        }
-
-        updateStatus('ডাটাবেস আপডেট হচ্ছে...');
-        await updateDoc(doc(db, 'designs', updateData.id), updates);
-        
-        updateStatus('সম্পন্ন!');
-        setTimeout(() => removeUploadItem(uploadId), 3000);
-      } catch (err) {
-        console.error("Update Error:", err);
-        updateStatus('ব্যর্থ: ' + err.message, true);
-      }
-    })();
-  };
-
-  const handleUpload = async () => {
-    // Check validation based on mode
-    if (useImageLink) {
-        if (!imageLinkInput || !newDesignTitle) return alert("নাম এবং ইমেজের লিংক দিন!");
-    } else {
-        if (!fileToUpload || !newDesignTitle) return alert("নাম এবং ছবি আপলোড করুন!");
+    if (activeData.useImageLink ? (!activeData.imageLinkInput || !activeData.title) : (!activeData.fileToUpload && !activeData.imageData)) {
+        return alert("নাম এবং ছবি দিন!");
     }
-    
+
     const uploadId = Date.now();
-    const newItem = { id: uploadId, title: newDesignTitle, status: 'শুরু হচ্ছে...', type: 'upload' };
+    const newItem = { id: uploadId, title: activeData.title, status: 'শুরু হচ্ছে...', type: 'upload', rawData: activeData };
     setActiveUploads(prev => [...prev, newItem]);
-
-    const uploadData = {
-      title: newDesignTitle,
-      tag: newDesignTag,
-      color: newDesignColor,
-      sourceLink: sourceLink,
-      useFile: useFileUpload,
-      sourceFileObj: sourceFile,
-      previewFileObj: fileToUpload,
-      imageLink: imageLinkInput,
-      isLinkMode: useImageLink,
-      uid: user.uid
-    };
-
     setIsUploadModalOpen(false);
     resetForm();
 
-    (async () => {
-      const updateStatus = (status, isError = false) => {
-        setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
-      };
+    const updateStatus = (status, isError = false) => {
+      setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
+    };
 
-      try {
-        let link = uploadData.sourceLink;
-        if (uploadData.useFile && uploadData.sourceFileObj) {
-          updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
-          link = await uploadToTelegram(uploadData.sourceFileObj);
-        }
-
-        let imgDataToSave = '';
-
-        if (uploadData.isLinkMode) {
-             // Use Direct Link
-             updateStatus('ইমেজ লিংক প্রসেসিং...');
-             imgDataToSave = uploadData.imageLink;
-        } else {
-             // Compress File
-             updateStatus('প্রিভিউ প্রসেসিং...');
-             imgDataToSave = await compressImage(uploadData.previewFileObj); 
-        }
-
-        updateStatus('ডাটাবেসে সেভ হচ্ছে...');
-        await addDoc(collection(db, 'designs'), {
-          title: uploadData.title,
-          tag: uploadData.tag,
-          color: uploadData.color,
-          imageData: imgDataToSave, // This can now be Base64 OR a URL
-          sourceLink: link,
-          uploaderId: uploadData.uid,
-          downloads: 0,
-          createdAt: serverTimestamp()
-        });
-        
-        updateStatus('সম্পন্ন!');
-        setTimeout(() => removeUploadItem(uploadId), 3000);
-
-      } catch (err) {
-        updateStatus('ব্যর্থ: ' + err.message, true);
+    try {
+      let finalSourceLink = activeData.sourceLink;
+      if (activeData.useFileUpload && activeData.sourceFile) {
+        updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
+        finalSourceLink = await uploadToTelegram(activeData.sourceFile);
       }
-    })();
+      
+      let imgDataToSave = activeData.imageData;
+      if (!activeData.useImageLink && activeData.fileToUpload) {
+        updateStatus('ছবি কম্প্রেস হচ্ছে...');
+        imgDataToSave = await compressImage(activeData.fileToUpload);
+      } else if (activeData.useImageLink) {
+        imgDataToSave = activeData.imageLinkInput;
+      }
+
+      updateStatus('ডাটাবেসে সেভ হচ্ছে...');
+      await addDoc(collection(db, 'designs'), { 
+        title: activeData.title, 
+        tag: activeData.tag, 
+        color: activeData.color, 
+        imageData: imgDataToSave, 
+        sourceLink: finalSourceLink || '', 
+        uploaderId: user?.uid || 'anon', 
+        downloads: 0, 
+        createdAt: serverTimestamp() 
+      });
+      updateStatus('সম্পন্ন!');
+      setTimeout(() => setActiveUploads(prev => prev.filter(i => i.id !== uploadId)), 3000);
+    } catch (err) {
+      updateStatus('ব্যর্থ: ' + err.message, true);
+    }
   };
 
-  const removeUploadItem = (id) => {
-    setActiveUploads(prev => prev.filter(item => item.id !== id));
-  };
+  const handleUpdate = async (retryData = null) => {
+    const activeData = retryData || { ...targetDesign, title: newDesignTitle, tag: newDesignTag, color: newDesignColor, sourceLink, useFileUpload, sourceFile };
+    if (!activeData.id) return;
 
-  const resetForm = () => {
-    setFileToUpload(null);
-    setPreviewUrl(null);
-    setNewDesignTitle('');
-    setNewDesignTag('Sublimation');
-    setNewDesignColor('Multicolor');
-    setSourceLink('');
-    setSourceFile(null);
-    setUseFileUpload(false);
-    setUseImageLink(false);
-    setImageLinkInput('');
+    const uploadId = Date.now();
+    const newItem = { id: uploadId, title: `Update: ${activeData.title}`, status: 'শুরু হচ্ছে...', type: 'update', rawData: activeData };
+    setActiveUploads(prev => [...prev, newItem]);
+    setIsEditModalOpen(false);
+    resetForm();
+
+    const updateStatus = (status, isError = false) => {
+      setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
+    };
+
+    try {
+      const updates = { 
+        title: activeData.title, 
+        tag: activeData.tag, 
+        color: activeData.color, 
+        sourceLink: activeData.sourceLink || '' 
+      };
+      
+      if (activeData.useFileUpload && activeData.sourceFile) {
+         updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
+         updates.sourceLink = await uploadToTelegram(activeData.sourceFile);
+      }
+
+      updateStatus('ডাটাবেস আপডেট হচ্ছে...');
+      await updateDoc(doc(db, 'designs', activeData.id), updates);
+      updateStatus('সম্পন্ন!');
+      setTimeout(() => setActiveUploads(prev => prev.filter(i => i.id !== uploadId)), 3000);
+    } catch (err) {
+      updateStatus('ব্যর্থ: ' + err.message, true);
+    }
   };
 
   const submitDeleteRequest = async () => {
-    if (!deleteReason) return alert("কারণ লিখতে হবে!");
+    if (!deleteReason || !targetDesign) return;
     try {
-      await addDoc(collection(db, 'deleteRequests'), {
-        designId: targetDesign.id,
-        designTitle: targetDesign.title,
-        imageData: targetDesign.imageData,
-        reason: deleteReason,
-        requestedBy: user.uid,
-        status: 'pending',
-        timestamp: serverTimestamp()
-      });
-      alert("ডিলিট রিকোয়েস্ট অ্যাডমিনের কাছে পাঠানো হয়েছে।");
-      setIsDeleteRequestOpen(false);
-      setDeleteReason('');
-    } catch (err) {
-      alert("রিকোয়েস্ট ফেইলড!");
-    }
+        await addDoc(collection(db, 'deleteRequests'), {
+            designId: targetDesign.id,
+            designTitle: targetDesign.title,
+            reason: deleteReason,
+            requestedBy: user?.uid || 'anon',
+            createdAt: serverTimestamp()
+        });
+        alert("ডিলিট রিকোয়েস্ট পাঠানো হয়েছে।");
+        setIsDeleteRequestOpen(false);
+        resetForm();
+    } catch (err) { alert(err.message); }
   };
 
-  const handleFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file && file.type.startsWith('image/')) {
-      setFileToUpload(file);
-      setPreviewUrl(URL.createObjectURL(file));
-      setUseImageLink(false);
-    }
-  };
-  
-  const handleImageLinkChange = (e) => {
-      const url = e.target.value;
-      setImageLinkInput(url);
-      setPreviewUrl(url); // Show preview from link
-  };
-
-  const handleSourceFileSelect = (e) => {
-    const file = e.target.files[0];
-    if (file) {
-      setSourceFile(file);
-    }
-  };
-
-  const openSourceLink = (id, link) => {
-    window.open(link, '_blank');
-    updateDoc(doc(db, 'designs', id), {
-      downloads: increment(1)
-    }).catch(e => console.log("Popularity update failed", e));
+  const approveDelete = async (req) => {
+    try {
+        await deleteDoc(doc(db, 'designs', req.designId));
+        await deleteDoc(doc(db, 'deleteRequests', req.id));
+    } catch (err) { alert(err.message); }
   };
 
   const downloadImage = (e, id, img, title) => {
     e.stopPropagation();
-    
-    updateDoc(doc(db, 'designs', id), {
-      downloads: increment(1)
-    }).catch(e => console.log("Popularity update failed", e));
-
+    updateDoc(doc(db, 'designs', id), { downloads: increment(1) }).catch(() => {});
     const image = new Image();
     image.src = img;
     image.crossOrigin = "anonymous";
@@ -514,575 +357,267 @@ export default function App() {
       const ctx = canvas.getContext('2d');
       const fontSize = Math.max(24, Math.floor(image.width * 0.04));
       canvas.width = image.width;
-      canvas.height = image.height + fontSize + 20;
+      canvas.height = image.height + fontSize + 40;
+      ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.drawImage(image, 0, 0);
-      ctx.fillStyle = '#fff';
-      ctx.fillRect(0, image.height, canvas.width, canvas.height);
-      ctx.fillStyle = '#000';
-      ctx.font = `bold ${fontSize}px sans-serif`;
-      ctx.textAlign = 'center';
-      ctx.fillText(title || 'HF Sublimation', canvas.width / 2, image.height + fontSize);
+      ctx.fillStyle = '#000'; ctx.font = `bold ${fontSize}px sans-serif`; ctx.textAlign = 'center';
+      ctx.fillText(title || 'HF Sublimation', canvas.width / 2, image.height + fontSize + 10);
       const link = document.createElement('a');
-      link.download = `${title}.jpg`;
-      link.href = canvas.toDataURL('image/jpeg', 0.9);
-      link.click();
+      link.download = `${title}.jpg`; link.href = canvas.toDataURL('image/jpeg', 0.9); link.click();
     };
   };
 
-  // --- ADMIN PANEL COMPONENT ---
-  const AdminPanel = () => {
-    const [requests, setRequests] = useState([]);
-    const [view, setView] = useState('dashboard');
-    const [newSettings, setNewSettings] = useState({ ...config });
-
-    useEffect(() => {
-      setNewSettings({ ...config });
-    }, [config]);
-
-    useEffect(() => {
-      const q = query(collection(db, 'deleteRequests'));
-      return onSnapshot(q, (snap) => {
-        setRequests(snap.docs.map(d => ({ id: d.id, ...d.data() })));
-      });
-    }, []);
-
-    const processRequest = async (req, action) => {
-      if (action === 'approve') {
-        await deleteDoc(doc(db, 'designs', req.designId));
-        await deleteDoc(doc(db, 'deleteRequests', req.id));
-        alert("ডিজাইন ডিলিট করা হয়েছে!");
-      } else {
-        await deleteDoc(doc(db, 'deleteRequests', req.id));
-        alert("রিকোয়েস্ট বাতিল করা হয়েছে।");
-      }
-    };
-
-    const saveAdminSettings = async () => {
-      await updateDoc(doc(db, 'settings', 'config'), newSettings);
-      alert("সেটিংস সেভ হয়েছে!");
-    };
-
-    return (
-      <div className="fixed inset-0 z-[100] bg-slate-100 overflow-auto font-sans">
-        <div className="flex h-screen">
-          {/* Sidebar */}
-          <div className="w-64 bg-slate-900 text-white p-6 flex flex-col">
-            <h2 className="text-2xl font-bold mb-8 text-indigo-400">Admin Panel</h2>
-            <nav className="space-y-4 flex-1">
-              <button onClick={() => setView('dashboard')} className={`w-full text-left p-3 rounded hover:bg-slate-800 ${view==='dashboard'?'bg-indigo-600':''}`}><LayoutDashboard className="inline mr-2" size={18}/> Dashboard</button>
-              <button onClick={() => setView('requests')} className={`w-full text-left p-3 rounded hover:bg-slate-800 ${view==='requests'?'bg-indigo-600':''}`}>
-                <Bell className="inline mr-2" size={18}/> Requests 
-                {requests.length > 0 && <span className="bg-red-500 text-xs px-2 py-1 rounded-full ml-2">{requests.length}</span>}
-              </button>
-              <button onClick={() => setView('settings')} className={`w-full text-left p-3 rounded hover:bg-slate-800 ${view==='settings'?'bg-indigo-600':''}`}><Settings className="inline mr-2" size={18}/> Settings</button>
-            </nav>
-            <button onClick={() => setShowAdminPanel(false)} className="bg-slate-800 p-3 rounded text-center hover:bg-red-600 transition">Back to Site</button>
-          </div>
-
-          {/* Content */}
-          <div className="flex-1 p-8 overflow-y-auto">
-            {view === 'dashboard' && (
-              <div className="space-y-6">
-                <h2 className="text-2xl font-bold text-slate-800">ওভারভিউ</h2>
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-                    <div className="bg-blue-100 p-4 rounded-full text-blue-600"><ImagePlus size={32}/></div>
-                    <div><p className="text-slate-500">মোট ডিজাইন</p><h3 className="text-2xl font-bold">{designs.length}</h3></div>
-                  </div>
-                  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-                    <div className="bg-green-100 p-4 rounded-full text-green-600"><Eye size={32}/></div>
-                    <div><p className="text-slate-500">মোট ভিউস</p><h3 className="text-2xl font-bold">{config.totalViews}</h3></div>
-                  </div>
-                  <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex items-center gap-4">
-                    <div className="bg-orange-100 p-4 rounded-full text-orange-600"><BarChart3 size={32}/></div>
-                    <div><p className="text-slate-500">ক্যাটাগরি</p><h3 className="text-2xl font-bold">{Object.keys(categoryStats).length}</h3></div>
-                  </div>
-                </div>
-
-                <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
-                  <h3 className="font-bold mb-4">ক্যাটাগরি অনুযায়ী আপলোড</h3>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                    {Object.entries(categoryStats).map(([cat, count]) => (
-                      <div key={cat} className="p-3 bg-slate-50 rounded border border-slate-100 flex justify-between">
-                        <span className="font-medium text-slate-600">{cat}</span>
-                        <span className="font-bold text-indigo-600">{count}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            )}
-
-            {view === 'requests' && (
-              <div>
-                <h2 className="text-2xl font-bold mb-6 text-slate-800">ডিলিট রিকোয়েস্ট ({requests.length})</h2>
-                {requests.length === 0 ? <p className="text-slate-500">কোনো রিকোয়েস্ট নেই।</p> : (
-                  <div className="space-y-4">
-                    {requests.map(req => (
-                      <div key={req.id} className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 flex gap-4 items-center">
-                        <img src={req.imageData} className="w-16 h-16 object-contain rounded bg-slate-50" />
-                        <div className="flex-1">
-                          <h4 className="font-bold text-slate-800">{req.designTitle}</h4>
-                          <p className="text-sm text-red-500 font-medium">কারণ: {req.reason}</p>
-                          <p className="text-xs text-slate-400">{req.timestamp?.toDate().toLocaleString()}</p>
-                        </div>
-                        <div className="flex gap-2">
-                          <button onClick={() => processRequest(req, 'reject')} className="px-4 py-2 bg-slate-200 rounded font-bold text-slate-700 hover:bg-slate-300">বাতিল</button>
-                          <button onClick={() => processRequest(req, 'approve')} className="px-4 py-2 bg-red-500 rounded font-bold text-white hover:bg-red-600">ডিলিট করুন</button>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
-              </div>
-            )}
-
-            {view === 'settings' && (
-              <div className="max-w-xl bg-white p-8 rounded-xl shadow-sm border border-slate-200">
-                <h2 className="text-xl font-bold mb-6 flex items-center gap-2"><ShieldCheck className="text-indigo-600"/> সিকিউরিটি সেটিংস</h2>
-                <div className="space-y-4">
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">ডিজাইনার পাসওয়ার্ড</label>
-                    <input type="text" className="w-full p-2 border rounded" value={newSettings.designerPass || ''} onChange={e => setNewSettings({...newSettings, designerPass: e.target.value})} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">অ্যাডমিন ইউজারনেম</label>
-                    <input type="text" className="w-full p-2 border rounded" value={newSettings.adminUser || ''} onChange={e => setNewSettings({...newSettings, adminUser: e.target.value})} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">অ্যাডমিন পাসওয়ার্ড</label>
-                    <input type="text" className="w-full p-2 border rounded" value={newSettings.adminPass || ''} onChange={e => setNewSettings({...newSettings, adminPass: e.target.value})} />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-bold text-slate-600 mb-1">হেডার ব্যানার ইমেজ (URL)</label>
-                    <input type="text" className="w-full p-2 border rounded" value={newSettings.headerImage || ''} onChange={e => setNewSettings({...newSettings, headerImage: e.target.value})} placeholder="https://..." />
-                  </div>
-                  <button onClick={saveAdminSettings} className="w-full bg-indigo-600 text-white py-3 rounded font-bold mt-4 hover:bg-indigo-700">আপডেট সেভ করুন</button>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
-      </div>
-    );
-  };
-
-  // --- MAIN RENDER ---
-  if (loading) return <div className="h-screen flex items-center justify-center"><Loader2 className="animate-spin text-indigo-600" size={40}/></div>;
-  if (showAdminPanel && isAdmin) return <AdminPanel />;
+  if (loading) return <div className="h-screen flex items-center justify-center bg-slate-50"><Loader2 className="animate-spin text-indigo-600" size={40}/></div>;
 
   return (
-    <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
+    <div className="min-h-screen bg-slate-50 font-sans text-slate-800 pb-20">
       
       {/* HEADER */}
-      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm transition-all duration-300">
-        <div className="max-w-7xl mx-auto px-4 py-4 md:py-5 flex flex-col items-center gap-4">
-          
+      <header className="sticky top-0 z-40 bg-white/90 backdrop-blur-md border-b border-slate-200 shadow-sm">
+        <div className="max-w-7xl mx-auto px-4 py-4 flex flex-col items-center gap-4">
           <div className="w-full flex items-center justify-between">
-            <div className="flex items-center gap-3">
-                <div className="flex items-center gap-2 cursor-pointer" onClick={() => {window.scrollTo(0, 0); setSelectedCategory('All'); setSelectedColorFilter('All');}}>
-                <div className="bg-gradient-to-tr from-indigo-600 to-purple-600 p-2.5 rounded-xl text-white shadow-lg shadow-indigo-200">
-                    <ImageIcon size={24} />
-                </div>
-                <div>
-                    <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700 hidden sm:block">
-                    HF Sublimation
-                    </h1>
-                    <h1 className="text-xl font-bold text-indigo-700 sm:hidden">HF</h1>
-                </div>
-                </div>
+            <div className="flex items-center gap-2 cursor-pointer" onClick={() => {window.scrollTo(0, 0); setSelectedCategory('All'); setSelectedColorFilter('All');}}>
+                <div className="bg-indigo-600 p-2.5 rounded-xl text-white shadow-lg"><ImageIcon size={24} /></div>
+                <h1 className="text-xl font-bold bg-clip-text text-transparent bg-gradient-to-r from-indigo-700 to-purple-700 hidden sm:block">HF Sublimation</h1>
             </div>
 
-            <div className="flex-1 max-w-md mx-4 relative group">
-                <Search className="absolute left-4 top-3 text-slate-400 group-focus-within:text-indigo-500 transition-colors" size={18} />
-                <input 
-                type="text" 
-                placeholder="ডিজাইন খুঁজুন..." 
-                className="w-full pl-11 pr-4 py-2.5 bg-slate-100 border-none rounded-full focus:ring-2 focus:ring-indigo-500/20 focus:bg-white transition-all shadow-inner outline-none text-sm font-medium"
-                value={searchQuery || ''}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                />
+            <div className="flex-1 max-w-md mx-4 relative">
+                <Search className="absolute left-4 top-3 text-slate-400" size={18} />
+                <input type="text" placeholder="ডিজাইন খুঁজুন..." className="w-full pl-11 pr-4 py-2.5 bg-slate-100 border-none rounded-full focus:ring-2 focus:ring-indigo-500/20 text-sm" value={searchQuery || ''} onChange={(e) => setSearchQuery(e.target.value)}/>
             </div>
 
             <div className="flex items-center gap-2">
                 {isDesigner ? (
                 <>
-                    {isAdmin && <button onClick={() => setShowAdminPanel(true)} className="bg-slate-800 text-white p-2 rounded-full" title="Admin Panel"><LayoutDashboard size={18}/></button>}
-                    <button 
-                      onClick={() => setIsSettingsModalOpen(true)}
-                      className="bg-slate-100 hover:bg-slate-200 text-slate-600 p-2.5 rounded-full border border-slate-200 transition-colors"
-                      title="সেটিংস"
-                    >
-                      <Settings size={18} />
-                    </button>
-                    <button 
-                      onClick={() => { resetForm(); setIsUploadModalOpen(true); }}
-                      className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200"
-                      title="আপলোড"
-                    >
-                      <Upload size={18} /> <span className="hidden sm:inline">আপলোড</span>
-                    </button>
-                    <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
+                    {isAdmin && <button onClick={() => setShowAdminPanel(true)} className="bg-slate-800 text-white p-2.5 rounded-full hover:scale-105 transition-transform"><LayoutDashboard size={18}/></button>}
+                    <button onClick={() => setIsSettingsModalOpen(true)} className="bg-slate-100 text-slate-600 p-2.5 rounded-full border border-slate-200"><Settings size={18} /></button>
+                    <button onClick={() => { resetForm(); setIsUploadModalOpen(true); }} className="bg-indigo-600 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-indigo-200 shadow-lg"><Upload size={18} /> <span className="hidden sm:inline">আপলোড</span></button>
+                    <button onClick={() => {setIsDesigner(false); setIsAdmin(false); setShowAdminPanel(false);}} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
                 </>
-                ) : (
-                <button 
-                    onClick={() => setShowLoginModal(true)} 
-                    className="bg-slate-800 hover:bg-slate-900 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md"
-                >
-                    <LogIn size={18} /> <span className="hidden sm:inline">লগইন</span>
-                </button>
-                )}
+                ) : <button onClick={() => setShowLoginModal(true)} className="bg-slate-800 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2"><LogIn size={18} /> <span className="hidden sm:inline">লগইন</span></button>}
             </div>
           </div>
 
-          {/* Filters Row */}
-          <div className="w-full overflow-x-auto pb-1 no-scrollbar flex items-center gap-4">
+          <div className="w-full flex items-center gap-3 overflow-x-auto no-scrollbar pb-1">
+            <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
+                <ArrowDownUp size={14} className="text-indigo-600"/>
+                <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={sortOption || 'newest'} onChange={(e) => setSortOption(e.target.value)}>
+                    <option value="newest">নতুন আপলোড</option>
+                    <option value="oldest">পুরাতন ফাইল</option>
+                    <option value="popular">জনপ্রিয়তা</option>
+                    <option value="name">নামানুসারে</option>
+                </select>
+            </div>
             
-            {/* FEATURE 5: Sorting Dropdown */}
-            <div className="flex items-center gap-2 shrink-0">
-               <span className="text-xs font-bold text-slate-400 uppercase flex items-center gap-1"><ArrowDownUp size={12}/> সর্টিং:</span>
-               <select 
-                 className="px-3 py-1.5 rounded-full text-xs font-bold border outline-none bg-white text-slate-600 cursor-pointer hover:border-slate-300"
-                 value={sortOption} 
-                 onChange={(e) => setSortOption(e.target.value)}
-               >
-                  <option value="newest">নতুন</option>
-                  <option value="oldest">পুরাতন</option>
-                  <option value="popular">জনপ্রিয়</option>
-                  <option value="name">নাম (A-Z)</option>
-               </select>
-            </div>
-
-            {/* Color Filter */}
-            <div className="flex items-center gap-2 shrink-0 border-l pl-4 border-slate-200">
-                <span className="text-xs font-bold text-slate-400 uppercase"><Filter size={12} className="inline"/> কালার:</span>
-                <div className="flex gap-2">
-                    <button onClick={() => setSelectedColorFilter('All')} className={`px-4 py-1.5 rounded-full text-xs font-bold border transition-all shrink-0 ${selectedColorFilter === 'All' ? 'bg-slate-800 text-white border-slate-800' : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-50'}`}>All</button>
-                    {COLORS.map((c) => (
-                    <button
-                        key={c.name}
-                        onClick={() => setSelectedColorFilter(c.name)}
-                        className={`px-3 py-1.5 rounded-full text-xs font-bold border flex items-center gap-2 transition-all shrink-0 ${
-                        selectedColorFilter === c.name 
-                            ? 'bg-white text-slate-800 border-indigo-500 ring-1 ring-indigo-500 shadow-sm' 
-                            : 'bg-white text-slate-500 border-slate-200 hover:border-slate-300'
-                        }`}
-                    >
-                        <span className="w-3 h-3 rounded-full border border-black/10" style={{ background: c.hex }}></span>
-                        {c.name}
-                    </button>
-                    ))}
-                </div>
-            </div>
-
-            {/* Category Filter (Designer Only) */}
+            {/* Conditional Dropdowns for Designers/Admins */}
             {isDesigner && (
-              <div className="flex items-center gap-2 shrink-0 border-l pl-4 border-slate-200">
-                <span className="text-xs font-bold text-indigo-500 uppercase">ক্যাটাগরি:</span>
-                <div className="flex gap-2">
-                  <button onClick={() => setSelectedCategory('All')} className={`px-3 py-1 rounded-full text-xs font-bold border ${selectedCategory==='All'?'bg-indigo-600 text-white':'bg-white text-slate-600'}`}>All</button>
-                  {categories.map(cat => (
-                    <button key={cat} onClick={() => setSelectedCategory(cat)} className={`px-3 py-1 rounded-full text-xs font-bold border ${selectedCategory===cat?'bg-indigo-100 text-indigo-700 border-indigo-200':'bg-white text-slate-500'}`}>{cat}</button>
-                  ))}
+              <>
+                <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
+                    <Palette size={14} className="text-indigo-600"/>
+                    <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}>
+                        <option value="All">সব কালার</option>
+                        {COLORS.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                    </select>
                 </div>
-              </div>
+                <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
+                    <Filter size={14} className="text-indigo-600"/>
+                    <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedCategory || 'All'} onChange={(e) => setSelectedCategory(e.target.value)}>
+                        <option value="All">সব ক্যাটাগরি</option>
+                        {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                    </select>
+                </div>
+              </>
             )}
           </div>
-
         </div>
       </header>
 
-      {/* UPLOAD QUEUE DISPLAY */}
+      {/* UPLOAD QUEUE with Retry/Edit logic */}
       {activeUploads.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[70] flex flex-col gap-2 max-w-sm w-full">
           {activeUploads.map(item => (
-            <div key={item.id} className={`bg-white p-3 rounded-lg shadow-xl border flex items-center justify-between gap-3 animate-in slide-in-from-right fade-in duration-300 ${item.isComplete ? 'border-green-500 bg-green-50' : item.isError ? 'border-red-500 bg-red-50' : 'border-indigo-100'}`}>
+            <div key={item.id} className={`bg-white p-3 rounded-lg shadow-xl border flex items-center justify-between gap-3 ${item.isComplete ? 'border-green-500 bg-green-50' : item.isError ? 'border-red-500 bg-red-50' : 'border-indigo-100'}`}>
               <div className="flex items-center gap-3 overflow-hidden">
-                {item.isComplete ? <CheckCircle className="text-green-600 shrink-0" size={20}/> : 
-                 item.isError ? <XCircle className="text-red-600 shrink-0" size={20}/> :
-                 <Loader2 className="animate-spin text-indigo-600 shrink-0" size={20}/>}
+                {item.isComplete ? <CheckCircle className="text-green-600" size={20}/> : item.isError ? <XCircle className="text-red-600" size={20}/> : <Loader2 className="animate-spin text-indigo-600" size={20}/>}
                 <div className="overflow-hidden">
-                  <p className="text-sm font-bold text-slate-700 truncate">{item.title}</p>
-                  <p className={`text-xs ${item.isComplete ? 'text-green-600' : item.isError ? 'text-red-500' : 'text-slate-500'}`}>{item.status}</p>
+                  <p className="text-sm font-bold truncate">{item.title}</p>
+                  <p className={`text-xs ${item.isError ? 'text-red-500 font-bold' : 'text-slate-500'}`}>{item.status}</p>
                 </div>
               </div>
-              <button onClick={() => removeUploadItem(item.id)} className="text-slate-400 hover:text-slate-600"><X size={16}/></button>
+              <div className="flex items-center gap-1">
+                {item.isError && (
+                  <button 
+                    onClick={() => {
+                        // Open the corresponding modal with old data for retry
+                        if (item.type === 'update') {
+                            openEditModal(null, item.rawData);
+                        } else {
+                            setNewDesignTitle(item.rawData.title);
+                            setNewDesignTag(item.rawData.tag);
+                            setNewDesignColor(item.rawData.color);
+                            setSourceLink(item.rawData.sourceLink);
+                            setPreviewUrl(item.rawData.imageData);
+                            setUseFileUpload(item.rawData.useFileUpload);
+                            setIsUploadModalOpen(true);
+                        }
+                    }} 
+                    className="p-1.5 bg-indigo-100 text-indigo-600 rounded hover:bg-indigo-200 transition-colors"
+                    title="Retry / Edit"
+                  >
+                    <RefreshCw size={14}/>
+                  </button>
+                )}
+                <button onClick={() => setActiveUploads(prev => prev.filter(i => i.id !== item.id))} className="text-slate-400 hover:text-slate-600 p-1.5"><X size={16}/></button>
+              </div>
             </div>
           ))}
         </div>
       )}
 
-      {/* --- MAIN GRID --- */}
+      {/* MAIN CONTENT */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
-        {displayedDesigns.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি</div>
+        {showAdminPanel && isAdmin ? (
+          <div className="space-y-8 animate-in fade-in duration-500">
+             <div className="flex items-center justify-between">
+                <h2 className="text-2xl font-bold flex items-center gap-2"><BarChart3/> অ্যাডমিন ড্যাশবোর্ড</h2>
+                <button onClick={() => setShowAdminPanel(false)} className="bg-slate-200 px-4 py-2 rounded-lg font-bold">ফিরে যান</button>
+             </div>
+             
+             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                <div className="bg-white p-6 rounded-2xl shadow-sm border text-center">
+                    <p className="text-slate-500 text-sm font-bold mb-1">মোট ডিজাইন</p>
+                    <p className="text-3xl font-black text-indigo-600">{designs.length}</p>
+                </div>
+                <div className="bg-white p-6 rounded-2xl shadow-sm border text-center">
+                    <p className="text-slate-500 text-sm font-bold mb-1">মোট ভিউ</p>
+                    <p className="text-3xl font-black text-purple-600">{config.totalViews}</p>
+                </div>
+                <div className="bg-white p-6 rounded-2xl shadow-sm border text-center">
+                    <p className="text-slate-500 text-sm font-bold mb-1">ডিলিট রিকোয়েস্ট</p>
+                    <p className="text-3xl font-black text-red-600">{deleteRequests.length}</p>
+                </div>
+             </div>
+
+             <div className="bg-white rounded-2xl shadow-sm border overflow-hidden">
+                <div className="p-4 border-b bg-slate-50 font-bold flex items-center gap-2"><Trash size={18}/> ডিলিট রিকোয়েস্ট সমূহ</div>
+                <div className="divide-y">
+                   {deleteRequests.length === 0 ? <p className="p-8 text-center text-slate-400">কোনো রিকোয়েস্ট নেই</p> : deleteRequests.map(req => (
+                     <div key={req.id} className="p-4 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                        <div>
+                            <p className="font-bold text-slate-700">{req.designTitle}</p>
+                            <p className="text-sm text-red-500 italic">কারণ: {req.reason}</p>
+                        </div>
+                        <div className="flex gap-2 w-full sm:w-auto">
+                            <button onClick={() => deleteDoc(doc(db, 'deleteRequests', req.id))} className="flex-1 sm:flex-none px-4 py-2 bg-slate-100 rounded-lg text-sm font-bold">বাতিল</button>
+                            <button onClick={() => approveDelete(req)} className="flex-1 sm:flex-none px-4 py-2 bg-red-600 text-white rounded-lg text-sm font-bold">অ্যাপ্রুভ</button>
+                        </div>
+                     </div>
+                   ))}
+                </div>
+             </div>
+          </div>
         ) : (
           <>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
-              {displayedDesigns.map(design => (
-                <div 
-                  key={design.id} 
-                  className="bg-white rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden group transition-all duration-300 hover:-translate-y-1 flex flex-col"
-                >
-                  
-                  {/* Image Area */}
-                  <div 
-                     className="relative w-full aspect-[4/5] bg-slate-50 overflow-hidden cursor-pointer border-b border-slate-50"
-                     onClick={() => setSelectedImage(design)}
-                  >
-                    <img 
-                      src={design.imageData} 
-                      alt={design.title} 
-                      className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" 
-                      loading="lazy"
-                    />
-                    
-                    {/* Tag & Color Dot */}
-                    <div className="absolute top-3 right-3 flex flex-col items-end gap-1">
-                        <span className="text-[10px] bg-white/90 backdrop-blur text-indigo-600 px-2.5 py-1 rounded-md shadow-sm font-bold tracking-wide uppercase border border-indigo-50">
-                          {design.tag}
-                        </span>
-                        {design.color && (
-                           <div 
-                             className="w-4 h-4 rounded-full border border-white shadow-sm" 
-                             style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}
-                             title={design.color}
-                           ></div>
-                        )}
+            {displayedDesigns.length === 0 ? <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি</div> : (
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                {displayedDesigns.map(design => (
+                  <div key={design.id} className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden group transition-all hover:-translate-y-1 flex flex-col">
+                    <div className="relative w-full aspect-[4/5] bg-slate-50 cursor-pointer" onClick={() => setSelectedImage(design)}>
+                      <img src={design.imageData} alt={design.title} className="w-full h-full object-contain p-2" loading="lazy" />
+                      <div className="absolute top-3 right-3 flex flex-col items-end gap-1">
+                          <span className="text-[10px] bg-white text-indigo-600 px-2 py-1 rounded shadow-sm font-bold uppercase border border-indigo-50">{design.tag}</span>
+                          <div className="w-3.5 h-3.5 rounded-full border border-white" style={{ background: COLORS.find(c => c.name === design.color)?.hex || design.color }}></div>
+                      </div>
                     </div>
-
-                    {/* Hover Overlay */}
-                    <div className="absolute inset-0 bg-slate-900/10 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
-                       <div className="bg-white/90 backdrop-blur text-slate-800 px-4 py-2 rounded-full shadow-lg font-medium text-sm transform translate-y-2 group-hover:translate-y-0 transition-transform">
-                          ক্লিক করে দেখুন
-                       </div>
+                    <div className="p-4 flex flex-col flex-1">
+                      <div className="flex justify-between items-start mb-3">
+                         <h3 className="font-bold text-slate-700 text-sm line-clamp-1">{design.title}</h3>
+                         {isDesigner && (
+                           <div className="flex gap-1">
+                            <button onClick={(e) => openEditModal(e, design)} className="text-slate-300 hover:text-indigo-500 p-1"><Pencil size={14} /></button>
+                            <button onClick={(e) => { e.stopPropagation(); setTargetDesign(design); setIsDeleteRequestOpen(true); }} className="text-slate-300 hover:text-red-500 p-1"><Trash2 size={14} /></button>
+                           </div>
+                         )}
+                      </div>
+                      <div className="grid grid-cols-2 gap-2 mt-auto">
+                        <button onClick={(e) => downloadImage(e, design.id, design.imageData, design.title)} className="bg-slate-50 text-slate-600 border border-slate-200 py-2 rounded-xl text-[11px] font-bold hover:bg-slate-100 flex items-center justify-center gap-1"><Download size={12}/> ছবি</button>
+                        {isDesigner && <button onClick={() => { window.open(design.sourceLink, '_blank'); updateDoc(doc(db, 'designs', design.id), { downloads: increment(1) }); }} className="bg-indigo-600 text-white py-2 rounded-xl text-[11px] font-bold hover:bg-indigo-700 flex items-center justify-center gap-1"><Unlock size={12}/> AI ফাইল</button>}
+                      </div>
                     </div>
                   </div>
-
-                  {/* Content Area */}
-                  <div className="p-5 flex flex-col flex-1">
-                    <div className="flex justify-between items-start mb-4">
-                       <h3 className="font-bold text-slate-700 text-base leading-tight line-clamp-2" title={design.title}>{design.title}</h3>
-                       
-                       {isDesigner && (
-                         <div className="flex gap-1 -mt-1 -mr-2">
-                          <button 
-                             onClick={(e) => openEditModal(e, design)} 
-                             className="text-slate-300 hover:text-indigo-500 transition-colors p-1"
-                             title="এডিট করুন"
-                          >
-                             <Pencil size={16} />
-                          </button>
-                          <button 
-                             onClick={(e) => { e.stopPropagation(); setTargetDesign(design); setIsDeleteRequestOpen(true); }} 
-                             className="text-slate-300 hover:text-red-500 transition-colors p-1"
-                             title="ডিলিট করুন"
-                          >
-                             <Trash2 size={16} />
-                          </button>
-                         </div>
-                       )}
-                    </div>
-                    
-                    <div className="grid grid-cols-1 gap-2">
-                      <button 
-                        onClick={(e) => downloadImage(e, design.id, design.imageData, design.title)}
-                        className="bg-slate-50 text-slate-600 border border-slate-200 py-2.5 rounded-xl text-xs font-bold hover:bg-slate-100 hover:text-indigo-600 hover:border-indigo-100 transition-all flex items-center justify-center gap-1.5"
-                      >
-                        <Download size={14} /> ছবি সেভ
-                      </button>
-
-                      {isDesigner && (
-                        <button 
-                          onClick={() => openSourceLink(design.id, design.sourceLink)}
-                          className="py-2.5 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-1.5 text-white shadow-sm bg-indigo-600 hover:bg-indigo-700 shadow-indigo-200"
-                        >
-                          <Unlock size={14} />
-                          AI ফাইল
-                        </button>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* FEATURE 4: Load More Button */}
-            {visibleCount < filteredDesigns.length && (
-              <div className="mt-10 text-center">
-                <button 
-                  onClick={() => setVisibleCount(prev => prev + 30)}
-                  className="bg-white border border-slate-300 text-slate-600 px-8 py-3 rounded-full font-bold hover:bg-slate-50 hover:text-indigo-600 shadow-sm transition-all"
-                >
-                  আরও ডিজাইন দেখুন ({filteredDesigns.length - visibleCount} টি বাকি)
-                </button>
+                ))}
               </div>
             )}
+            {visibleCount < filteredDesigns.length && <div className="mt-10 text-center"><button onClick={() => setVisibleCount(prev => prev + 30)} className="bg-white border border-slate-300 text-slate-600 px-8 py-2.5 rounded-full font-bold hover:bg-slate-50 shadow-sm transition-all">আরও দেখুন</button></div>}
           </>
         )}
       </main>
 
-      {/* --- MODALS --- */}
-
-      {/* LOGIN */}
-      {showLoginModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white p-8 rounded-2xl w-full max-w-sm relative">
-            <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4"><X size={20}/></button>
-            <h2 className="text-xl font-bold mb-4 text-center">লগইন করুন</h2>
-            <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
-              <button onClick={() => setLoginType('designer')} className={`flex-1 py-2 text-sm font-bold rounded-md ${loginType==='designer'?'bg-white shadow text-indigo-600':'text-slate-500'}`}>ডিজাইনার</button>
-              <button onClick={() => setLoginType('admin')} className={`flex-1 py-2 text-sm font-bold rounded-md ${loginType==='admin'?'bg-white shadow text-indigo-600':'text-slate-500'}`}>অ্যাডমিন</button>
-            </div>
-            <form onSubmit={handleLogin} className="space-y-4">
-              {loginType === 'admin' && (
-                <input type="text" placeholder="ইউজারনেম" className="w-full p-3 border rounded-lg" value={loginInput.user || ''} onChange={e => setLoginInput({...loginInput, user: e.target.value})} />
-              )}
-              <input type="password" placeholder="পাসওয়ার্ড" className="w-full p-3 border rounded-lg" value={loginInput.pass || ''} onChange={e => setLoginInput({...loginInput, pass: e.target.value})} />
-              <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-lg font-bold">লগইন</button>
-            </form>
-          </div>
-        </div>
-      )}
-
-      {/* SETTINGS MODAL */}
-      {isSettingsModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white p-6 rounded-2xl w-full max-w-md overflow-hidden relative z-10 shadow-2xl animate-[fadeIn_0.3s_ease-out]">
-            <div className="p-6 border-b border-slate-100 flex justify-between items-center bg-white">
-              <h2 className="font-bold text-lg text-slate-800 flex items-center gap-2">
-                 <Settings size={20} className="text-slate-600"/> সেটিংস
-              </h2>
-              <button className="bg-slate-100 p-2 rounded-full hover:bg-red-50 hover:text-red-500 transition-colors" onClick={() => setIsSettingsModalOpen(false)}>
-                 <X size={18} />
-              </button>
-            </div>
-            
-            <div className="p-6 space-y-4">
-               <div>
-                  <label className="text-xs font-bold text-slate-500 uppercase ml-1 mb-2 block">গুগল ড্রাইভ স্ক্রিপ্ট URL</label>
-                  <p className="text-xs text-slate-400 mb-2">ফাইল অটো-আপলোডের জন্য আপনার Google Apps Script এর Web App URL টি এখানে দিন।</p>
-                  <textarea 
-                     rows={4}
-                     className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none focus:ring-2 focus:ring-indigo-500/20 focus:border-indigo-500 transition-all text-xs font-mono text-slate-600 break-all"
-                     value={tempScriptUrl || ''}
-                     onChange={(e) => setTempScriptUrl(e.target.value)}
-                     placeholder="https://script.google.com/macros/s/..."
-                  />
-               </div>
-            </div>
-
-            <div className="p-6 bg-slate-50 border-t border-slate-100 flex gap-4">
-              <button onClick={() => setIsSettingsModalOpen(false)} className="flex-1 py-3 rounded-xl border border-slate-200 text-slate-600 hover:bg-white font-bold transition-colors">বাতিল</button>
-              <button onClick={handleSaveSettings} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg">
-                সেভ করুন
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* UPLOAD / EDIT */}
+      {/* UPLOAD / EDIT MODAL */}
       {(isUploadModalOpen || isEditModalOpen) && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
-          <div className="bg-white p-6 rounded-2xl w-full max-w-lg h-[90vh] overflow-y-auto relative">
-            <h2 className="text-lg font-bold mb-4">{isEditModalOpen ? 'এডিট ডিজাইন' : 'নতুন আপলোড'}</h2>
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+          <div className="bg-white p-6 rounded-2xl w-full max-w-lg h-[90vh] overflow-y-auto relative shadow-2xl animate-in zoom-in-95 duration-200">
+            <h2 className="text-xl font-bold mb-4 flex items-center gap-2">{isEditModalOpen ? <Pencil size={20}/> : <PlusCircle size={20}/>} {isEditModalOpen ? 'এডিট ডিজাইন' : 'নতুন আপলোড'}</h2>
             <div className="space-y-4">
-              
-              {/* Image Input Section (Enhanced with Tabs) */}
-              {isUploadModalOpen && (
-                <div className="bg-slate-50 p-4 rounded-xl border border-slate-200">
-                    <div className="flex gap-2 mb-4 bg-white p-1 rounded-lg border border-slate-200">
-                        <button 
-                            onClick={() => { setUseImageLink(false); setPreviewUrl(null); setImageLinkInput(''); }}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${!useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
-                        >
-                            <FileImage size={14}/> ফাইল আপলোড
-                        </button>
-                        <button 
-                            onClick={() => { setUseImageLink(true); setPreviewUrl(null); setFileToUpload(null); }}
-                            className={`flex-1 flex items-center justify-center gap-2 py-2 text-xs font-bold rounded-md transition-all ${useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500 hover:bg-slate-50'}`}
-                        >
-                            <LinkIcon size={14}/> ইমেজ লিংক
-                        </button>
+              <div className="bg-slate-50 p-4 rounded-xl border">
+                  {!isEditModalOpen && (
+                    <div className="flex gap-2 mb-4 bg-white p-1 rounded-lg">
+                        <button onClick={() => {setUseImageLink(false); setPreviewUrl(null);}} className={`flex-1 py-1.5 text-[11px] font-bold rounded-md ${!useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500'}`}>ফাইল</button>
+                        <button onClick={() => {setUseImageLink(true); setPreviewUrl(null);}} className={`flex-1 py-1.5 text-[11px] font-bold rounded-md ${useImageLink ? 'bg-indigo-600 text-white shadow-sm' : 'text-slate-500'}`}>লিংক</button>
                     </div>
-
-                    {!useImageLink ? (
-                        <div className="border-2 border-dashed border-indigo-200 bg-white rounded-xl p-4 text-center relative hover:border-indigo-400 transition-colors">
-                            <input type="file" onChange={handleFileSelect} className="absolute inset-0 opacity-0 cursor-pointer"/>
-                            {previewUrl ? (
-                                <img src={previewUrl} className="h-32 mx-auto object-contain rounded" />
-                            ) : <div className="py-8 text-slate-400"><CloudUpload className="mx-auto mb-2 text-indigo-400"/> ছবি সিলেক্ট করুন</div>}
-                        </div>
-                    ) : (
-                        <div>
-                            <input 
-                                type="text" 
-                                placeholder="ছবির ডাইরেক্ট লিংক পেস্ট করুন (URL)..." 
-                                className="w-full p-3 border rounded-lg text-sm bg-white focus:ring-2 focus:ring-indigo-500/20 outline-none"
-                                value={imageLinkInput}
-                                onChange={handleImageLinkChange}
-                            />
-                            {previewUrl && (
-                                <div className="mt-3 bg-white p-2 rounded border text-center">
-                                    <p className="text-xs text-slate-400 mb-1">প্রিভিউ</p>
-                                    <img src={previewUrl} className="h-32 mx-auto object-contain rounded" onError={(e) => e.target.style.display='none'}/>
-                                </div>
-                            )}
-                        </div>
-                    )}
-                </div>
-              )}
-
-              <input type="text" placeholder="ডিজাইনের নাম" className="w-full p-3 border rounded-lg" value={newDesignTitle || ''} onChange={e => setNewDesignTitle(e.target.value)} />
-              
-              {/* Category Input with Suggestions */}
-              <div>
-                <label className="text-xs font-bold text-slate-500 mb-1 block">ক্যাটাগরি (লিখুন বা সিলেক্ট করুন)</label>
-                <input list="cat-suggestions" type="text" className="w-full p-3 border rounded-lg" value={newDesignTag || ''} onChange={e => setNewDesignTag(e.target.value)} />
-                <datalist id="cat-suggestions">
-                  {categories.map(c => <option key={c} value={c} />)}
-                </datalist>
+                  )}
+                  {(!useImageLink || isEditModalOpen) ? (
+                      <div className="border-2 border-dashed border-indigo-200 bg-white rounded-xl p-4 text-center relative hover:border-indigo-400 group transition-colors">
+                          <input type="file" accept="image/*" onChange={(e) => { const f = e.target.files[0]; if(f){ setFileToUpload(f); setPreviewUrl(URL.createObjectURL(f)); }}} className="absolute inset-0 opacity-0 cursor-pointer"/>
+                          {previewUrl ? <img src={previewUrl} className="h-32 mx-auto object-contain rounded shadow-sm" /> : <div className="py-8 text-slate-400 group-hover:text-indigo-500"><CloudUpload className="mx-auto mb-2" size={32}/> ছবি সিলেক্ট করুন</div>}
+                      </div>
+                  ) : <input type="text" placeholder="ইমেজ লিংক (Direct URL)..." className="w-full p-3 border rounded-lg text-sm" value={imageLinkInput || ''} onChange={(e) => {setImageLinkInput(e.target.value); setPreviewUrl(e.target.value);}} />}
               </div>
 
-              {/* Source Link or File */}
-              <div className="bg-slate-50 p-3 rounded-lg border">
-                <div className="flex justify-between mb-2">
-                  <label className="text-xs font-bold">সোর্স ফাইল (AI/PSD)</label>
-                  <button 
-                    type="button" 
-                    onClick={(e) => {
-                      e.preventDefault();
-                      setUseFileUpload(!useFileUpload);
-                    }} 
-                    className="text-xs text-indigo-600 font-bold"
-                  >
-                    {useFileUpload ? 'লিঙ্ক দিন' : 'ফাইল আপলোড'}
-                  </button>
+              <input type="text" placeholder="ডিজাইনের নাম" className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-indigo-500 outline-none" value={newDesignTitle || ''} onChange={e => setNewDesignTitle(e.target.value)} />
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div className="space-y-1">
+                   <div className="flex justify-between items-center">
+                       <label className="text-[11px] font-bold text-slate-500">ক্যাটাগরি</label>
+                       <button onClick={() => setIsCustomCategory(!isCustomCategory)} className="text-[10px] text-indigo-600 font-bold flex items-center gap-1">
+                           {isCustomCategory ? <><Filter size={10}/> সিলেক্ট করুন</> : <><PlusCircle size={10}/> লিখুন</>}
+                       </button>
+                   </div>
+                   {isCustomCategory ? (
+                       <input type="text" placeholder="ক্যাটাগরি লিখুন..." className="w-full p-2.5 border rounded-lg text-sm" value={newDesignTag || ''} onChange={e => setNewDesignTag(e.target.value)} autoFocus />
+                   ) : (
+                       <select className="w-full p-2.5 border rounded-lg text-sm" value={newDesignTag || 'Sublimation'} onChange={e => setNewDesignTag(e.target.value)}>
+                          {categories.map(c => <option key={c} value={c}>{c}</option>)}
+                       </select>
+                   )}
                 </div>
+                <div className="space-y-1">
+                   <label className="text-[11px] font-bold text-slate-500">কালার</label>
+                   <select className="w-full p-2.5 border rounded-lg text-sm" value={newDesignColor || 'Multicolor'} onChange={e => setNewDesignColor(e.target.value)}>
+                      {COLORS.map(c => <option key={c.name} value={c.name}>{c.name}</option>)}
+                   </select>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3 rounded-xl border">
+                <div className="flex justify-between mb-2"><label className="text-xs font-bold text-slate-600">সোর্স ফাইল (AI/PSD)</label><button onClick={() => setUseFileUpload(!useFileUpload)} className="text-[10px] bg-white px-2 py-1 border rounded shadow-sm text-indigo-600 font-bold">{useFileUpload ? 'লিঙ্ক দিন' : 'ফাইল আপলোড'}</button></div>
                 {useFileUpload ? (
-                  <input type="file" onChange={handleSourceFileSelect} className="w-full text-sm" />
+                    <div className="flex items-center gap-2 bg-white p-2 rounded-lg border">
+                        <LinkIcon size={14} className="text-slate-400"/>
+                        <input type="file" onChange={(e) => setSourceFile(e.target.files[0])} className="w-full text-xs" />
+                    </div>
                 ) : (
-                  <input type="text" placeholder="Drive Link..." className="w-full p-2 border rounded" value={sourceLink || ''} onChange={e => setSourceLink(e.target.value)} />
+                    <div className="flex items-center gap-2 bg-white p-2 rounded-lg border">
+                        <LinkIcon size={14} className="text-slate-400"/>
+                        <input type="text" placeholder="Drive বা সোর্স লিঙ্ক দিন..." className="w-full text-xs outline-none" value={sourceLink || ''} onChange={e => setSourceLink(e.target.value)} />
+                    </div>
                 )}
               </div>
-
-              {/* Color */}
-              <div className="flex gap-2 flex-wrap">
-                {COLORS.map(c => (
-                  <button key={c.name} onClick={() => setNewDesignColor(c.name)} className={`w-8 h-8 rounded-full border-2 shadow-sm transition-transform ${newDesignColor===c.name?'ring-2 ring-indigo-500 scale-110 border-white':'border-slate-200 hover:scale-110'}`} style={{background:c.hex}} title={c.name}/>
-                ))}
-              </div>
             </div>
-
-            <div className="flex gap-4 mt-6">
-              <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); }} className="flex-1 py-3 border rounded-lg font-bold">বাতিল</button>
-              <button 
-                onClick={isEditModalOpen ? handleUpdate : handleUpload} 
-                className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700"
-              >
-                সেভ করুন
-              </button>
+            <div className="flex gap-4 mt-8 sticky bottom-0 bg-white pt-4">
+              <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); resetForm(); }} className="flex-1 py-3 border rounded-xl font-bold text-slate-500 hover:bg-slate-50 transition-colors">বাতিল</button>
+              <button onClick={() => isEditModalOpen ? handleUpdate() : handleUpload()} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg shadow-indigo-100 transition-all">সেভ করুন</button>
             </div>
           </div>
         </div>
@@ -1092,25 +627,74 @@ export default function App() {
       {isDeleteRequestOpen && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white p-6 rounded-2xl w-full max-w-sm">
-            <h2 className="text-lg font-bold mb-2 text-red-600">ডিলিট রিকোয়েস্ট পাঠান</h2>
-            <p className="text-sm text-slate-500 mb-4">আপনি সরাসরি ডিলিট করতে পারবেন না। কারণ লিখে অ্যাডমিনকে পাঠান।</p>
-            <textarea className="w-full p-3 border rounded-lg h-24 mb-4" placeholder="কেন ডিলিট করতে চান?" value={deleteReason || ''} onChange={e => setDeleteReason(e.target.value)}></textarea>
+            <h2 className="font-bold mb-4 flex items-center gap-2 text-red-600"><Trash2 size={20}/> ডিলিট রিকোয়েস্ট</h2>
+            <textarea className="w-full p-3 border rounded-lg h-24 mb-4 text-sm" placeholder="কেন ডিলিট করতে চান? কারণ লিখুন..." value={deleteReason || ''} onChange={e => setDeleteReason(e.target.value)}></textarea>
             <div className="flex gap-2">
-              <button onClick={() => setIsDeleteRequestOpen(false)} className="flex-1 py-2 border rounded">বাতিল</button>
-              <button onClick={submitDeleteRequest} className="flex-1 py-2 bg-red-600 text-white rounded font-bold">পাঠান</button>
+              <button onClick={() => setIsDeleteRequestOpen(false)} className="flex-1 py-2 border rounded-lg font-bold">বাতিল</button>
+              <button onClick={submitDeleteRequest} className="flex-1 py-2 bg-red-600 text-white rounded-lg font-bold">পাঠান</button>
             </div>
           </div>
         </div>
       )}
 
-      {/* FULL VIEW */}
+      {/* SETTINGS MODAL */}
+      {isSettingsModalOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white p-6 rounded-2xl w-full max-w-md relative">
+            <h2 className="font-bold text-lg mb-4 flex items-center gap-2"><Settings size={20}/> সিস্টেম সেটিংস</h2>
+            <div className="space-y-4">
+                <div>
+                    <label className="text-xs font-bold text-slate-500 block mb-1">গুগল ড্রাইভ স্ক্রিপ্ট ইউআরএল</label>
+                    <textarea rows={3} className="w-full p-3.5 bg-slate-50 border border-slate-200 rounded-xl outline-none text-xs font-mono text-slate-600" value={tempScriptUrl || ''} onChange={(e) => setTempScriptUrl(e.target.value)} placeholder="Google Web App URL..."/>
+                </div>
+                {isAdmin && (
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">অ্যাডমিন পাসওয়ার্ড</label>
+                        <input type="text" className="w-full p-2 border rounded-lg text-sm" value={config.adminPass} onChange={e => setConfig({...config, adminPass: e.target.value})}/>
+                    </div>
+                    <div>
+                        <label className="text-xs font-bold text-slate-500 block mb-1">ডিজাইনার পাসওয়ার্ড</label>
+                        <input type="text" className="w-full p-2 border rounded-lg text-sm" value={config.designerPass} onChange={e => setConfig({...config, designerPass: e.target.value})}/>
+                    </div>
+                  </div>
+                )}
+            </div>
+            <div className="mt-6 flex gap-3">
+              <button onClick={() => setIsSettingsModalOpen(false)} className="flex-1 py-3 rounded-xl border text-slate-600 font-bold">বাতিল</button>
+              <button onClick={async () => { await setDoc(doc(db, "settings", "config"), { scriptUrl: tempScriptUrl, adminPass: config.adminPass, designerPass: config.designerPass }, { merge: true }); setIsSettingsModalOpen(false); alert("সেভ হয়েছে!"); }} className="flex-1 py-3 bg-indigo-600 text-white rounded-xl font-bold hover:bg-indigo-700 shadow-lg">সেভ করুন</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* LOGIN MODAL */}
+      {showLoginModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
+          <div className="bg-white p-8 rounded-2xl w-full max-w-xs relative shadow-2xl animate-in fade-in zoom-in duration-200">
+            <button onClick={() => setShowLoginModal(false)} className="absolute top-4 right-4 text-slate-400"><X size={20}/></button>
+            <h2 className="text-xl font-bold mb-6 text-center">সিস্টেম লগইন</h2>
+            <div className="flex bg-slate-100 p-1 rounded-lg mb-6">
+              <button onClick={() => setLoginType('designer')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${loginType==='designer'?'bg-white shadow text-indigo-600':'text-slate-500'}`}>ডিজাইনার</button>
+              <button onClick={() => setLoginType('admin')} className={`flex-1 py-2 text-sm font-bold rounded-md transition-all ${loginType==='admin'?'bg-white shadow text-indigo-600':'text-slate-500'}`}>অ্যাডমিন</button>
+            </div>
+            <form onSubmit={handleLogin} className="space-y-4">
+              {loginType === 'admin' && <input type="text" placeholder="ইউজারনেম" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" value={loginInput.user || ''} onChange={e => setLoginInput({...loginInput, user: e.target.value})} />}
+              <input type="password" placeholder="পাসওয়ার্ড" className="w-full p-3 border rounded-xl outline-none focus:ring-2 focus:ring-indigo-500" value={loginInput.pass || ''} onChange={e => setLoginInput({...loginInput, pass: e.target.value})} />
+              <button type="submit" className="w-full bg-indigo-600 text-white py-3 rounded-xl font-bold shadow-lg shadow-indigo-100">লগইন করুন</button>
+            </form>
+          </div>
+        </div>
+      )}
+
+      {/* FULL PREVIEW */}
       {selectedImage && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4" onClick={() => setSelectedImage(null)}>
-          <button className="absolute top-4 right-4 text-white"><X size={32}/></button>
-          <img src={selectedImage.imageData} className="max-h-[85vh] max-w-full rounded" onClick={e => e.stopPropagation()}/>
-          <div className="absolute bottom-8 bg-white px-6 py-3 rounded-full flex gap-4" onClick={e => e.stopPropagation()}>
-            <button onClick={(e) => downloadImage(e, selectedImage.id, selectedImage.imageData, selectedImage.title)} className="flex gap-2 font-bold text-slate-800"><Download/> সেভ</button>
-            {isDesigner && <button onClick={() => openSourceLink(selectedImage.id, selectedImage.sourceLink)} className="flex gap-2 font-bold text-indigo-600"><Unlock/> সোর্স</button>}
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/95 p-4 animate-in fade-in duration-300" onClick={() => setSelectedImage(null)}>
+          <button className="absolute top-6 right-6 text-white hover:scale-110 transition-transform"><X size={32}/></button>
+          <img src={selectedImage.imageData} className="max-h-[85vh] max-w-full rounded shadow-2xl" onClick={e => e.stopPropagation()}/>
+          <div className="absolute bottom-8 bg-white/10 backdrop-blur-xl border border-white/20 px-8 py-3 rounded-full flex gap-6 text-white" onClick={e => e.stopPropagation()}>
+            <button onClick={(e) => downloadImage(e, selectedImage.id, selectedImage.imageData, selectedImage.title)} className="flex items-center gap-2 font-bold text-sm hover:text-indigo-400 transition-colors"><Download size={20}/> সেভ ইমেজ</button>
+            {isDesigner && <button onClick={() => window.open(selectedImage.sourceLink, '_blank')} className="flex items-center gap-2 font-bold text-sm hover:text-indigo-400 transition-colors"><Unlock size={20}/> সোর্স ফাইল</button>}
           </div>
         </div>
       )}
