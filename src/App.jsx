@@ -26,7 +26,7 @@ import {
   Settings, LayoutDashboard, CheckCircle, XCircle,
   ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon,
   Layers, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert,
-  Award, Smartphone
+  Award, Smartphone, UserPlus // Added UserPlus icon
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -959,7 +959,38 @@ export default function App() {
                     <button onClick={() => { resetForm(); setIsUploadModalOpen(true); }} className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 transition-all shadow-md shadow-indigo-200" title="আপলোড"><Upload size={18} /> <span className="hidden sm:inline">আপলোড</span></button>
                     <button onClick={handleLogout} className="bg-red-50 text-red-500 p-2.5 rounded-full border border-red-100"><LogOut size={18}/></button>
                 </>
-                ) : <button onClick={() => setShowLoginModal(true)} className="bg-slate-800 hover:bg-slate-900 text-white p-2.5 sm:px-5 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md"><LogIn size={18} /> <span className="hidden sm:inline">লগইন</span></button>}
+                ) : userProfile?.name ? (
+                    // Registered User View
+                    <div className="flex items-center gap-3 bg-white border border-slate-200 rounded-full px-4 py-1.5 shadow-sm">
+                        <div className="flex flex-col items-end leading-tight">
+                            <span className="text-[10px] text-slate-400 font-bold uppercase">ডাউনলোড লিমিট</span>
+                            <span className={`text-xs font-black font-mono ${userProfile.downloadCount >= userProfile.dailyLimit ? 'text-red-500' : 'text-indigo-600'}`}>
+                                {userProfile.downloadCount || 0} / {userProfile.dailyLimit || 5}
+                            </span>
+                        </div>
+                        <div className="h-8 w-px bg-slate-200 mx-1"></div>
+                        <div className="text-right">
+                             <span className="block text-xs font-bold text-slate-700">{userProfile.name}</span>
+                             <span className="block text-[10px] text-slate-400">Level {userProfile.trustLevel || 1}</span>
+                        </div>
+                    </div>
+                ) : (
+                    // Guest View
+                    <>
+                        <button 
+                            onClick={() => setShowRegisterModal(true)} 
+                            className="bg-indigo-600 hover:bg-indigo-700 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md shadow-indigo-200 transition-all"
+                        >
+                            <UserPlus size={18} /> <span className="hidden sm:inline">সাইন আপ</span>
+                        </button>
+                        <button 
+                            onClick={() => setShowLoginModal(true)} 
+                            className="bg-slate-800 hover:bg-slate-900 text-white p-2.5 sm:px-4 sm:py-2.5 rounded-full sm:rounded-xl flex items-center gap-2 shadow-md transition-all"
+                        >
+                            <LogIn size={18} /> <span className="hidden sm:inline">লগইন</span>
+                        </button>
+                    </>
+                )}
             </div>
           </div>
 
