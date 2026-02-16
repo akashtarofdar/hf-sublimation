@@ -424,7 +424,7 @@ export default function App() {
   };
 
   const handleUpload = async (retryData = null) => {
-    // If retryData exists, use it, otherwise use current state
+    // If retryData passed (from retry button) use it, else use state
     const activeData = retryData || { 
         title: newDesignTitle, 
         tag: newDesignTag, 
@@ -833,7 +833,7 @@ export default function App() {
                              <p className="font-bold text-sm truncate">{d.title}</p>
                              <div className="flex gap-2 mt-2">
                                  <button onClick={() => deleteDoc(doc(db, 'designs', d.id))} className="flex-1 py-2 bg-red-100 text-red-600 rounded-lg font-bold flex justify-center"><X/></button>
-                                 <button onClick={() => { updateDoc(doc(db, 'designs', d.id), { status: 'approved' }); alert('Approved!'); }} className="flex-1 py-2 bg-green-600 text-white rounded-lg font-bold flex justify-center"><CheckCircle/></button>
+                                 <button onClick={() => approveDesign(d)} className="flex-1 py-2 bg-green-600 text-white rounded-lg font-bold flex justify-center"><CheckCircle/></button>
                              </div>
                          </div>
                      ))}
@@ -1141,7 +1141,15 @@ export default function App() {
 
             <div className="flex gap-4 mt-6">
               <button onClick={() => { setIsUploadModalOpen(false); setIsEditModalOpen(false); }} className="flex-1 py-3 border rounded-lg font-bold">বাতিল</button>
-              <button onClick={isEditModalOpen ? handleUpdate : handleUpload} className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700">সেভ করুন</button>
+              <button 
+                  onClick={() => {
+                      if (isEditModalOpen) handleUpdate(); 
+                      else handleUpload();
+                  }} 
+                  className="flex-1 py-3 bg-indigo-600 text-white rounded-lg font-bold hover:bg-indigo-700"
+              >
+                  সেভ করুন
+              </button>
             </div>
           </div>
         </div>
