@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -12,20 +12,18 @@ import {
   updateDoc, 
   doc, 
   setDoc, 
-  getDoc,
   onSnapshot, 
   serverTimestamp, 
   query,
   increment,
-  deleteDoc,
-  where
+  deleteDoc
 } from 'firebase/firestore';
 import { 
   Upload, Search, X, Image as ImageIcon, Loader2, Lock, Unlock, 
   Trash2, LogIn, LogOut, Download, Palette, Filter, Pencil, CloudUpload, 
   Settings, LayoutDashboard, CheckCircle, XCircle,
   ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon,
-  Layers, Copy, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert
+  Layers, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -43,7 +41,7 @@ const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
 
-// Updated COLORS with Bangla Labels
+// COLORS
 const COLORS = [
   { name: 'Red', label: 'লাল', hex: '#ef4444', rgb: [239, 68, 68] }, 
   { name: 'Blue', label: 'নীল', hex: '#3b82f6', rgb: [59, 130, 246] }, 
@@ -62,7 +60,7 @@ const getDominantColor = (imgElement) => {
   try {
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d');
-    canvas.width = 100; // Resize for speed
+    canvas.width = 100;
     canvas.height = 100;
     ctx.drawImage(imgElement, 0, 0, 100, 100);
     const data = ctx.getImageData(0, 0, 100, 100).data;
@@ -115,15 +113,15 @@ const compressImage = (file) => {
 
 export default function App() {
   const [user, setUser] = useState(null);
-  const [userProfile, setUserProfile] = useState(null); // { name, whatsapp, isBanned, warning }
+  const [userProfile, setUserProfile] = useState(null);
   const [designs, setDesigns] = useState([]);
-  const [usersList, setUsersList] = useState([]); // Admin only
+  const [usersList, setUsersList] = useState([]);
   const [deleteRequests, setDeleteRequests] = useState([]);
   const [loading, setLoading] = useState(true);
   const [isDesigner, setIsDesigner] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
   const [showLoginModal, setShowLoginModal] = useState(false);
-  const [showRegisterModal, setShowRegisterModal] = useState(false); // For source file access
+  const [showRegisterModal, setShowRegisterModal] = useState(false);
   const [loginType, setLoginType] = useState('designer'); 
   const [loginInput, setLoginInput] = useState({ user: '', pass: '' });
   const [registerInput, setRegisterInput] = useState({ name: '', whatsapp: '' });
@@ -138,7 +136,7 @@ export default function App() {
   const [showAdminPanel, setShowAdminPanel] = useState(false);
   const [adminView, setAdminView] = useState('dashboard');
   
-  // New Bulk Upload State
+  // Bulk Upload State
   const [showBulkUpload, setShowBulkUpload] = useState(false);
 
   const [searchQuery, setSearchQuery] = useState('');
@@ -159,9 +157,9 @@ export default function App() {
   const [imageLinkInput, setImageLinkInput] = useState('');
   const [sourceFile, setSourceFile] = useState(null);
   const [useFileUpload, setUseFileUpload] = useState(false);
-  const [designPassword, setDesignPassword] = useState(''); // New for Lock
-  const [isLocked, setIsLocked] = useState(false); // New for Lock
-  const [unlockInput, setUnlockInput] = useState(''); // For user to enter password
+  const [designPassword, setDesignPassword] = useState('');
+  const [isLocked, setIsLocked] = useState(false);
+  const [unlockInput, setUnlockInput] = useState('');
 
   const [activeUploads, setActiveUploads] = useState([]);
   const [tempScriptUrl, setTempScriptUrl] = useState('');
@@ -217,10 +215,8 @@ export default function App() {
     if (!user || !isAdmin) return;
     const qDel = query(collection(db, 'deleteRequests'));
     const unsubDel = onSnapshot(qDel, (snap) => setDeleteRequests(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-    
     const qUsers = query(collection(db, 'users'));
     const unsubUsers = onSnapshot(qUsers, (snap) => setUsersList(snap.docs.map(d => ({ id: d.id, ...d.data() }))));
-
     return () => { unsubDel(); unsubUsers(); };
   }, [user, isAdmin]);
 
@@ -237,7 +233,6 @@ export default function App() {
         setDoc(configRef, config, { merge: true });
       }
     });
-
     const viewed = sessionStorage.getItem('viewed');
     if (!viewed) {
       updateDoc(configRef, { totalViews: increment(1) }).catch(() => {});
@@ -293,7 +288,6 @@ export default function App() {
   const handleUserRegister = async (e) => {
     e.preventDefault();
     if (!registerInput.name || !registerInput.whatsapp) return alert("সব তথ্য দিন");
-    
     try {
         await setDoc(doc(db, 'users', user.uid), {
             name: registerInput.name,
@@ -316,8 +310,6 @@ export default function App() {
       const url = URL.createObjectURL(file);
       setPreviewUrl(url);
       setUseImageLink(false);
-      
-      // Auto Color Detection
       const img = new Image();
       img.src = url;
       img.onload = () => {
@@ -340,199 +332,29 @@ export default function App() {
     }
   };
 
-  const uploadToTelegram = async (file) => {
-    const data = new FormData();
-    data.append("file", file);
-    const res = await fetch("https://private-link-sender.onrender.com/upload", { method: "POST", body: data });
-    const json = await res.json();
-    if (json.success) return json.link;
-    throw new Error("ফাইল ৫০ এমবির বেশি হতে পারে।");
-  };
-
-  const resetForm = () => {
-    setFileToUpload(null); setPreviewUrl(null); setNewDesignTitle(''); setNewDesignTag('Sublimation'); setIsCustomCategory(false);
-    setNewDesignColor('Multicolor'); setSourceLink(''); setSourceFile(null); setUseFileUpload(false);
-    setUseImageLink(false); setImageLinkInput(''); setTargetDesign(null); setDeleteReason('');
-    setIsLocked(false); setDesignPassword('');
-  };
-
-  const openEditModal = (e, design) => {
-    if (e) e.stopPropagation();
-    setTargetDesign(design);
-    setNewDesignTitle(design.title || '');
-    setNewDesignTag(design.tag || 'Sublimation');
-    setNewDesignColor(design.color || 'Multicolor');
-    setSourceLink(design.sourceLink || '');
-    setPreviewUrl(design.imageData || null);
-    setIsLocked(design.isLocked || false);
-    setDesignPassword(design.password || '');
-    setIsEditModalOpen(true);
-  };
-
-  const handleUpload = async (retryData = null) => {
-    const activeData = retryData || { 
-        title: newDesignTitle, 
-        tag: newDesignTag, 
-        color: newDesignColor, 
-        sourceLink, 
-        useFileUpload, 
-        sourceFile, 
-        fileToUpload, 
-        imageLinkInput, 
-        useImageLink, 
-        imageData: previewUrl,
-        isLocked,
-        password: designPassword
-    };
-
-    if (activeData.useImageLink ? (!activeData.imageLinkInput || !activeData.title) : (!activeData.fileToUpload && !activeData.imageData)) {
-        return alert("নাম এবং ছবি দিন!");
-    }
-
-    const uploadId = Date.now();
-    const newItem = { id: uploadId, title: activeData.title, status: 'শুরু হচ্ছে...', type: 'upload', rawData: activeData };
-    setActiveUploads(prev => [...prev, newItem]);
-    setIsUploadModalOpen(false);
-    resetForm();
-
-    const updateStatus = (status, isError = false) => {
-      setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
-    };
-
-    try {
-      let finalSourceLink = activeData.sourceLink;
-      if (activeData.useFileUpload && activeData.sourceFile) {
-        updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
-        finalSourceLink = await uploadToTelegram(activeData.sourceFile);
-      }
-      
-      let imgDataToSave = activeData.imageData;
-      if (!activeData.useImageLink && activeData.fileToUpload) {
-        updateStatus('ছবি কম্প্রেস হচ্ছে...');
-        imgDataToSave = await compressImage(activeData.fileToUpload);
-      } else if (activeData.useImageLink) {
-        imgDataToSave = activeData.imageLinkInput;
-      }
-
-      updateStatus('ডাটাবেসে সেভ হচ্ছে...');
-      await addDoc(collection(db, 'designs'), { 
-        title: activeData.title, 
-        tag: activeData.tag, 
-        color: activeData.color, 
-        imageData: imgDataToSave, 
-        sourceLink: finalSourceLink || '', 
-        uploaderId: user?.uid || 'anon', 
-        downloads: 0, 
-        isLocked: isAdmin ? (activeData.isLocked || false) : false,
-        password: isAdmin ? (activeData.password || '') : '',
-        createdAt: serverTimestamp() 
-      });
-      updateStatus('সম্পন্ন!');
-      setTimeout(() => setActiveUploads(prev => prev.filter(i => i.id !== uploadId)), 3000);
-    } catch (err) {
-      updateStatus('ব্যর্থ: ' + err.message, true);
-    }
-  };
-
-  const handleUpdate = async (retryData = null) => {
-    const activeData = retryData || { ...targetDesign, title: newDesignTitle, tag: newDesignTag, color: newDesignColor, sourceLink, useFileUpload, sourceFile, isLocked, password: designPassword };
-    if (!activeData.id) return;
-
-    const uploadId = Date.now();
-    const newItem = { id: uploadId, title: `Update: ${activeData.title}`, status: 'শুরু হচ্ছে...', type: 'update', rawData: activeData };
-    setActiveUploads(prev => [...prev, newItem]);
-    setIsEditModalOpen(false);
-    resetForm();
-
-    const updateStatus = (status, isError = false) => {
-      setActiveUploads(prev => prev.map(item => item.id === uploadId ? { ...item, status, isError, isComplete: !isError && status === 'সম্পন্ন!' } : item));
-    };
-
-    try {
-      const updates = { 
-        title: activeData.title, 
-        tag: activeData.tag, 
-        color: activeData.color, 
-        sourceLink: activeData.sourceLink || '' 
-      };
-
-      if (isAdmin) {
-          updates.isLocked = activeData.isLocked;
-          updates.password = activeData.password;
-      }
-      
-      if (activeData.useFileUpload && activeData.sourceFile) {
-         updateStatus('সোর্স ফাইল আপলোড হচ্ছে...');
-         updates.sourceLink = await uploadToTelegram(activeData.sourceFile);
-      }
-
-      updateStatus('ডাটাবেস আপডেট হচ্ছে...');
-      await updateDoc(doc(db, 'designs', activeData.id), updates);
-      updateStatus('সম্পন্ন!');
-      setTimeout(() => setActiveUploads(prev => prev.filter(i => i.id !== uploadId)), 3000);
-    } catch (err) {
-      updateStatus('ব্যর্থ: ' + err.message, true);
-    }
-  };
-
-  const submitDeleteRequest = async () => {
-    if (!deleteReason || !targetDesign) return;
-    try {
-        await addDoc(collection(db, 'deleteRequests'), {
-            designId: targetDesign.id,
-            designTitle: targetDesign.title,
-            reason: deleteReason,
-            requestedBy: user?.uid || 'anon',
-            createdAt: serverTimestamp()
-        });
-        alert("ডিলিট রিকোয়েস্ট পাঠানো হয়েছে।");
-        setIsDeleteRequestOpen(false);
-        resetForm();
-    } catch (err) { alert(err.message); }
-  };
-
   const openSourceLink = (design) => {
-    // 1. Check if user is registered
     if (!isDesigner && !isAdmin) {
-        if (!userProfile?.name) {
-            setShowRegisterModal(true);
-            return;
-        }
-        if (userProfile?.isBanned) {
-            alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।");
-            return;
-        }
+        if (!userProfile?.name) { setShowRegisterModal(true); return; }
+        if (userProfile?.isBanned) { alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।"); return; }
     }
-
-    // 2. Check Lock
     if (design.isLocked && !isDesigner && !isAdmin) {
         if (unlockInput !== design.password) {
             const pass = prompt("এই ফাইলটি লক করা। পাসওয়ার্ড দিন:");
-            if (pass !== design.password) {
-                return alert("ভুল পাসওয়ার্ড!");
-            }
+            if (pass !== design.password) return alert("ভুল পাসওয়ার্ড!");
         }
     }
-
     window.open(design.sourceLink, '_blank');
-    updateDoc(doc(db, 'designs', design.id), {
-      downloads: increment(1)
-    }).catch(e => console.log("Popularity update failed", e));
+    updateDoc(doc(db, 'designs', design.id), { downloads: increment(1) }).catch(e => console.log("Popularity update failed", e));
   };
 
   const shareDesign = (id) => {
       const url = `${window.location.origin}${window.location.pathname}?id=${id}`;
-      // Fallback copy method
       const textArea = document.createElement("textarea");
       textArea.value = url;
       document.body.appendChild(textArea);
       textArea.select();
-      try {
-        document.execCommand('copy');
-        alert("লিংক কপি হয়েছে!");
-      } catch (err) {
-        alert("লিংক কপি করা যায়নি।");
-      }
+      try { document.execCommand('copy'); alert("লিংক কপি হয়েছে!"); } 
+      catch (err) { alert("লিংক কপি করা যায়নি।"); }
       document.body.removeChild(textArea);
   };
 
@@ -557,20 +379,167 @@ export default function App() {
     };
   };
 
-  const toggleUserBan = async (u) => {
-      await updateDoc(doc(db, 'users', u.id), { isBanned: !u.isBanned });
-  };
-
+  const toggleUserBan = async (u) => { await updateDoc(doc(db, 'users', u.id), { isBanned: !u.isBanned }); };
   const sendUserWarning = async (u) => {
       const msg = prompt("ওয়ার্নিং মেসেজ লিখুন:", u.warning || "");
-      if (msg !== null) {
-          await updateDoc(doc(db, 'users', u.id), { warning: msg });
-      }
+      if (msg !== null) await updateDoc(doc(db, 'users', u.id), { warning: msg });
   };
 
   // --- BULK UPLOAD COMPONENT ---
   const BulkUploadDashboard = () => {
-      return <div className="p-8 text-center bg-white rounded">বাল্ক আপলোড ফিচারটি (Bulk Upload) এখানে লোড হবে...</div>
+    const [rawImageLinks, setRawImageLinks] = useState('');
+    const [rawSourceLinks, setRawSourceLinks] = useState('');
+    const [bulkItems, setBulkItems] = useState([]);
+    const [globalCategory, setGlobalCategory] = useState('Sublimation');
+    const [globalColor, setGlobalColor] = useState('Multicolor');
+    const [processing, setProcessing] = useState(false);
+
+    const parseLinks = () => {
+        const images = rawImageLinks.split('\n').filter(l => l.trim() !== '');
+        const sources = rawSourceLinks.split('\n').filter(l => l.trim() !== '');
+        
+        const items = images.map((imgUrl, index) => {
+            let title = 'Design ' + (index + 1);
+            try {
+               const filename = imgUrl.substring(imgUrl.lastIndexOf('/') + 1).split('?')[0];
+               title = filename.split('.')[0].replace(/[-_]/g, ' ');
+            } catch (e) {}
+
+            return {
+                id: Date.now() + index,
+                imageUrl: imgUrl.trim(),
+                title: title,
+                category: globalCategory,
+                color: globalColor,
+                sourceLink: sources[index] ? sources[index].trim() : '',
+                status: 'pending'
+            };
+        });
+        setBulkItems(items);
+    };
+
+    const processBulkUpload = async () => {
+        setProcessing(true);
+        const newItems = [...bulkItems];
+        
+        for (let i = 0; i < newItems.length; i++) {
+            if (newItems[i].status === 'done') continue;
+            newItems[i].status = 'uploading';
+            setBulkItems([...newItems]);
+            try {
+                await addDoc(collection(db, 'designs'), { 
+                    title: newItems[i].title, 
+                    tag: newItems[i].category, 
+                    color: newItems[i].color, 
+                    imageData: newItems[i].imageUrl, 
+                    sourceLink: newItems[i].sourceLink, 
+                    uploaderId: user?.uid || 'anon', 
+                    downloads: 0, 
+                    isLocked: false,
+                    password: '',
+                    createdAt: serverTimestamp() 
+                });
+                newItems[i].status = 'done';
+            } catch (err) {
+                newItems[i].status = 'error';
+                console.error(err);
+            }
+            setBulkItems([...newItems]);
+        }
+        setProcessing(false);
+    };
+
+    const updateItem = (index, field, value) => {
+        const newItems = [...bulkItems];
+        newItems[index][field] = value;
+        setBulkItems(newItems);
+    };
+
+    const removeItem = (index) => {
+        const newItems = [...bulkItems];
+        newItems.splice(index, 1);
+        setBulkItems(newItems);
+    };
+
+    return (
+        <div className="fixed inset-0 z-[100] bg-slate-50 overflow-auto font-sans animate-in slide-in-from-bottom duration-300">
+            <div className="max-w-7xl mx-auto p-4 md:p-8">
+                <div className="flex justify-between items-center mb-8 bg-white p-4 rounded-2xl shadow-sm border">
+                    <div>
+                        <h2 className="text-2xl font-bold flex items-center gap-2 text-indigo-700"><Layers/> বাল্ক আপলোড ড্যাশবোর্ড</h2>
+                        <p className="text-slate-500 text-sm">দ্রুত একাধিক ফাইল আপলোড করুন (Direct Link Only)</p>
+                    </div>
+                    <button onClick={() => setShowBulkUpload(false)} className="bg-slate-100 hover:bg-slate-200 px-6 py-2 rounded-xl font-bold text-slate-600 transition-colors">ফিরে যান</button>
+                </div>
+
+                {bulkItems.length === 0 ? (
+                    <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
+                        <div className="lg:col-span-2 space-y-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border">
+                                <h3 className="font-bold mb-3 flex items-center gap-2 text-slate-700"><ImageIcon size={18}/> ইমেজ লিংক (Postimages Direct Link)</h3>
+                                <textarea className="w-full h-64 p-4 border rounded-xl text-xs font-mono bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder={`https://i.postimg.cc/xyz/design-1.jpg\nhttps://i.postimg.cc/abc/design-2.jpg\n... (প্রতি লাইনে একটি লিংক)`} value={rawImageLinks} onChange={e => setRawImageLinks(e.target.value)}></textarea>
+                            </div>
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border">
+                                <h3 className="font-bold mb-3 flex items-center gap-2 text-slate-700"><LinkIcon size={18}/> সোর্স ফাইল লিংক (Optional - Auto mapped)</h3>
+                                <textarea className="w-full h-40 p-4 border rounded-xl text-xs font-mono bg-slate-50 focus:ring-2 focus:ring-indigo-500 outline-none" placeholder={`Drive Link 1\nDrive Link 2\n... (প্রথম লাইনের ইমেজের সাথে প্রথম লাইনের সোর্স লিংক যুক্ত হবে)`} value={rawSourceLinks} onChange={e => setRawSourceLinks(e.target.value)}></textarea>
+                            </div>
+                        </div>
+                        <div className="space-y-6">
+                            <div className="bg-white p-6 rounded-2xl shadow-sm border h-full">
+                                <h3 className="font-bold mb-6 flex items-center gap-2 text-slate-700"><Settings size={18}/> গ্লোবাল সেটিংস</h3>
+                                <div className="space-y-4">
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট ক্যাটাগরি</label>
+                                        <select className="w-full p-3 border rounded-xl font-medium" value={globalCategory} onChange={e => setGlobalCategory(e.target.value)}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                                    </div>
+                                    <div>
+                                        <label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট কালার</label>
+                                        <select className="w-full p-3 border rounded-xl font-medium" value={globalColor} onChange={e => setGlobalColor(e.target.value)}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
+                                    </div>
+                                    <div className="pt-6">
+                                        <button onClick={parseLinks} disabled={!rawImageLinks.trim()} className="w-full py-4 bg-indigo-600 disabled:bg-slate-300 text-white rounded-xl font-bold shadow-lg shadow-indigo-200 hover:bg-indigo-700 transition-all flex justify-center items-center gap-2"><FileText size={20}/> প্রিভিউ জেনারেট করুন</button>
+                                        <p className="text-xs text-center mt-3 text-slate-400">অটোমেটিক টাইটেল জেনারেট হবে</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                ) : (
+                    <div className="space-y-6">
+                        <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                            {bulkItems.map((item, index) => (
+                                <div key={item.id} className={`bg-white p-3 rounded-xl border flex gap-3 ${item.status === 'done' ? 'border-green-500 bg-green-50' : item.status === 'error' ? 'border-red-500 bg-red-50' : 'border-slate-200'}`}>
+                                    <img src={item.imageUrl} className="w-24 h-32 object-contain bg-slate-50 rounded-lg border" />
+                                    <div className="flex-1 space-y-2 overflow-hidden">
+                                        <input type="text" className="w-full p-1.5 border rounded text-sm font-bold" value={item.title} onChange={(e) => updateItem(index, 'title', e.target.value)} placeholder="Title" disabled={item.status === 'done'}/>
+                                        <div className="flex gap-2">
+                                            <select className="flex-1 p-1 border rounded text-xs" value={item.category} onChange={(e) => updateItem(index, 'category', e.target.value)} disabled={item.status === 'done'}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                                            <select className="w-24 p-1 border rounded text-xs" value={item.color} onChange={(e) => updateItem(index, 'color', e.target.value)} disabled={item.status === 'done'}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-slate-50 p-1 rounded border">
+                                            <LinkIcon size={12} className="text-slate-400"/>
+                                            <input type="text" className="w-full bg-transparent text-xs outline-none text-slate-600" value={item.sourceLink} onChange={(e) => updateItem(index, 'sourceLink', e.target.value)} placeholder="Source Link..." disabled={item.status === 'done'}/>
+                                        </div>
+                                        <div className="flex justify-between items-center pt-1">
+                                            <span className={`text-xs font-bold ${item.status === 'done' ? 'text-green-600' : item.status === 'error' ? 'text-red-500' : 'text-slate-400'}`}>{item.status === 'pending' ? 'Ready' : item.status === 'uploading' ? 'Uploading...' : item.status === 'done' ? 'Success' : 'Error'}</span>
+                                            {item.status !== 'done' && (<button onClick={() => removeItem(index)} className="text-red-400 hover:text-red-600"><Trash size={16}/></button>)}
+                                        </div>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                        <div className="sticky bottom-4 bg-white p-4 rounded-2xl shadow-xl border flex gap-4 items-center justify-between">
+                             <button onClick={() => { setBulkItems([]); setRawImageLinks(''); setRawSourceLinks(''); }} className="px-6 py-3 border rounded-xl font-bold text-slate-500 hover:bg-slate-50">রিসেট করুন</button>
+                             <div className="text-right">
+                                <p className="text-xs text-slate-400 font-bold uppercase mb-1">{bulkItems.filter(i => i.status === 'done').length} / {bulkItems.length} সম্পন্ন</p>
+                                <button onClick={processBulkUpload} disabled={processing || bulkItems.every(i => i.status === 'done')} className="px-10 py-3 bg-indigo-600 disabled:bg-slate-300 text-white rounded-xl font-bold shadow-lg hover:bg-indigo-700 transition-all flex items-center gap-2">{processing ? <Loader2 className="animate-spin"/> : <Save/>} সব আপলোড করুন</button>
+                             </div>
+                        </div>
+                    </div>
+                )}
+            </div>
+        </div>
+    );
   };
 
   // --- MAIN RENDER ---
@@ -672,8 +641,7 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 font-sans text-slate-800">
-      
-      {/* WARNING MESSAGE FOR BANNED/WARNED USERS */}
+      {/* WARNING MESSAGE */}
       {userProfile?.warning && (
           <div className="bg-yellow-50 border-b border-yellow-200 p-3 text-center text-sm font-bold text-yellow-800 flex items-center justify-center gap-2">
               <ShieldAlert size={16}/> অ্যাডমিন বার্তা: {userProfile.warning}
@@ -718,7 +686,7 @@ export default function App() {
                </select>
             </div>
             
-            {/* Color Filter (Visible to All) */}
+            {/* Color Filter */}
             <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                 <Palette size={14} className="text-indigo-600"/>
                 <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}>
@@ -727,7 +695,7 @@ export default function App() {
                 </select>
             </div>
 
-            {/* Category Filter (Designer Only) */}
+            {/* Category Filter */}
             {isDesigner && (
               <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                   <Filter size={14} className="text-indigo-600"/>
@@ -741,7 +709,8 @@ export default function App() {
         </div>
       </header>
 
-      {/* UPLOAD QUEUE DISPLAY */}
+      {/* UPLOAD QUEUE & MAIN GRID are handled same as previous code, including modals below */}
+      
       {activeUploads.length > 0 && (
         <div className="fixed bottom-4 right-4 z-[70] flex flex-col gap-2 max-w-sm w-full">
           {activeUploads.map(item => (
@@ -755,7 +724,6 @@ export default function App() {
         </div>
       )}
 
-      {/* --- MAIN GRID --- */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {displayedDesigns.length === 0 ? (
           <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি</div>
@@ -808,7 +776,6 @@ export default function App() {
             <h2 className="text-lg font-bold mb-4">{isEditModalOpen ? 'এডিট ডিজাইন' : 'নতুন আপলোড'}</h2>
             <div className="space-y-4">
               
-              {/* Telegram Bot Notice */}
               <div className="bg-blue-50 p-3 rounded-lg border border-blue-200 text-xs text-blue-800 flex gap-2">
                   <AlertTriangle className="shrink-0" size={16}/>
                   <div>
@@ -855,7 +822,6 @@ export default function App() {
                 {useFileUpload ? <input type="file" onChange={handleSourceFileSelect} className="w-full text-sm" /> : <input type="text" placeholder="লিংক পেস্ট করুন..." className="w-full p-2 border rounded" value={sourceLink || ''} onChange={e => setSourceLink(e.target.value)} />}
               </div>
 
-              {/* Lock Feature (Admin Only) */}
               {isAdmin && (
                   <div className="bg-red-50 p-3 rounded-lg border border-red-200">
                       <div className="flex items-center gap-2 mb-2">
@@ -905,7 +871,7 @@ export default function App() {
         </div>
       )}
       
-      {/* Existing Login/Settings/Delete Modals - Preserved */}
+      {/* Login & Delete Modals */}
       {showLoginModal && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4">
           <div className="bg-white p-8 rounded-2xl w-full max-w-sm relative">
