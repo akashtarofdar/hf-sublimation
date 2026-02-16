@@ -278,6 +278,7 @@ export default function App() {
     const q = query(collection(db, 'designs'));
     const unsub = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort initially by date desc to ensure order
       items.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setDesigns(items);
       setLoading(false);
@@ -323,8 +324,10 @@ export default function App() {
   // FILTERED DESIGNS
   const filteredDesigns = useMemo(() => {
     let result = designs.filter(d => {
-      // Logic: Show if Approved OR if (User is Owner or Admin)
-      const isApproved = d.status === 'approved';
+      // FIX: Treat undefined status as 'approved' for legacy designs
+      const currentStatus = d.status || 'approved'; 
+
+      const isApproved = currentStatus === 'approved';
       const isOwner = user && d.uploaderId === user.uid;
       const isSiteAdmin = isAdmin;
 
@@ -617,7 +620,6 @@ export default function App() {
   };
 
   const openSourceLink = async (design) => {
-    // 1. Validation Checks
     if (!isDesigner && !isAdmin) {
         if (!userProfile?.name) { setShowRegisterModal(true); return; }
         if (userProfile?.isBanned) { alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে।"); return; }
@@ -625,9 +627,9 @@ export default function App() {
             alert(`আপনার আজকের ডাউনলোড লিমিট (${userProfile.dailyLimit}) শেষ।`);
             return;
         }
+        await updateDoc(doc(db, 'users', user.uid), { downloadCount: increment(1) });
     }
 
-    // 2. Lock Check
     if (design.isLocked && !isDesigner && !isAdmin) {
         if (unlockInput !== design.password) {
             const pass = prompt("এই ফাইলটি লক করা। পাসওয়ার্ড দিন:");
@@ -635,13 +637,7 @@ export default function App() {
         }
     }
 
-    // 3. Open Link (Action)
     window.open(design.sourceLink, '_blank');
-
-    // 4. Deduct Point (After Action)
-    if (!isDesigner && !isAdmin) {
-        await updateDoc(doc(db, 'users', user.uid), { downloadCount: increment(1) });
-    }
     updateDoc(doc(db, 'designs', design.id), { downloads: increment(1) }).catch(e => console.log("Popularity update failed", e));
   };
 
