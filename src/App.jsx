@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -26,7 +26,7 @@ import {
   Settings, LayoutDashboard, CheckCircle, XCircle,
   ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon,
   Layers, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert,
-  Award, Smartphone, UserPlus // Added UserPlus icon
+  Award, Smartphone, UserPlus
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -219,6 +219,18 @@ export default function App() {
     return onAuthStateChanged(auth, setUser);
   }, []);
 
+  // Handle Special Routes (Admin/Designer)
+  useEffect(() => {
+    const path = window.location.pathname.toLowerCase();
+    if (path.includes('/admin')) {
+        setLoginType('admin');
+        setShowLoginModal(true);
+    } else if (path.includes('/designer')) {
+        setLoginType('designer');
+        setShowLoginModal(true);
+    }
+  }, []);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sharedId = params.get('id');
@@ -339,8 +351,7 @@ export default function App() {
     
     // Check if device already exists
     const q = query(collection(db, 'users'), where('deviceId', '==', currentDeviceId));
-    // Due to firestore rules/client side limits, real validation should be server side, but this is client simulation
-    // We will proceed for now assuming good faith or simple check
+    // In real app, check exists. Here assuming client logic.
     
     try {
         await setDoc(doc(db, 'users', user.uid), {
@@ -491,9 +502,7 @@ export default function App() {
           if (newUploads >= 20) { newTrust = 3; newLimit = 20; }
           else if (newUploads >= 5) { newTrust = 2; newLimit = 10; }
           
-          // Bonus +1 for valid upload (Optional logic tweak based on prompt: "প্রতি ১টি ভ্যালিড আপলোডের জন্য দৈনিক ডাউনলোড লিমিট +১ বেড়ে যাবে")
-          // Here we just follow the Tier system as it's more stable, but can add +1 to limit directly
-          newLimit += 1;
+          newLimit += 1; // Bonus for upload
 
           await updateDoc(doc(db, 'users', user.uid), {
               uploads: newUploads,
@@ -568,7 +577,6 @@ export default function App() {
   };
 
   const openSourceLink = async (design) => {
-    // 1. Check if user is registered/logged in
     if (!isDesigner && !isAdmin) {
         if (!userProfile?.name) {
             setShowRegisterModal(true);
@@ -578,20 +586,15 @@ export default function App() {
             alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে। অ্যাডমিনের সাথে যোগাযোগ করুন।");
             return;
         }
-        
-        // 2. CHECK DOWNLOAD LIMIT
         if ((userProfile.downloadCount || 0) >= (userProfile.dailyLimit || 5)) {
             alert(`আপনার আজকের ডাউনলোড লিমিট (${userProfile.dailyLimit}) শেষ। লিমিট বাড়াতে ফাইল আপলোড করুন।`);
             return;
         }
-        
-        // Increment Download Count
         await updateDoc(doc(db, 'users', user.uid), {
             downloadCount: increment(1)
         });
     }
 
-    // 3. Check Lock
     if (design.isLocked && !isDesigner && !isAdmin) {
         if (unlockInput !== design.password) {
             const pass = prompt("এই ফাইলটি লক করা। পাসওয়ার্ড দিন:");
@@ -973,6 +976,7 @@ export default function App() {
                              <span className="block text-xs font-bold text-slate-700">{userProfile.name}</span>
                              <span className="block text-[10px] text-slate-400">Level {userProfile.trustLevel || 1}</span>
                         </div>
+                        <button onClick={() => { resetForm(); setIsUploadModalOpen(true); }} className="bg-indigo-50 text-indigo-600 p-2 rounded-full hover:bg-indigo-100 transition-colors" title="আপলোড করে লিমিট বাড়ান"><Upload size={16}/></button>
                     </div>
                 ) : (
                     // Guest View
