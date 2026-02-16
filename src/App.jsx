@@ -26,7 +26,7 @@ import {
   Settings, LayoutDashboard, CheckCircle, XCircle,
   ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon,
   Layers, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert,
-  Award, Smartphone, UserPlus, Info, ExternalLink, KeyRound, CheckSquare
+  Award, Smartphone, UserPlus, Info, ExternalLink, KeyRound, CheckSquare, Clock
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -210,6 +210,31 @@ export default function App() {
     return onAuthStateChanged(auth, setUser);
   }, []);
 
+  // Admin Notification Listener
+  useEffect(() => {
+      if (!isAdmin) return;
+      if (Notification.permission !== "granted") Notification.requestPermission();
+      
+      const q = query(collection(db, 'designs'), where('status', '==', 'pending'));
+      const unsub = onSnapshot(q, (snapshot) => {
+          snapshot.docChanges().forEach((change) => {
+              if (change.type === "added") {
+                  const data = change.doc.data();
+                  // Only notify for very recent uploads (within last minute) to avoid spam on load
+                  const now = Date.now();
+                  const docTime = data.createdAt?.toMillis() || now;
+                  if (now - docTime < 60000) {
+                      new Notification("নতুন ডিজাইন আপলোড হয়েছে!", {
+                          body: `Title: ${data.title}\nঅ্যাপ্রুভ করতে প্যানেলে যান।`,
+                          icon: data.imageData
+                      });
+                  }
+              }
+          });
+      });
+      return () => unsub();
+  }, [isAdmin]);
+
   // Handle Special Routes
   useEffect(() => {
     const path = window.location.pathname.toLowerCase();
@@ -253,7 +278,6 @@ export default function App() {
     const q = query(collection(db, 'designs'));
     const unsub = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-      // Sort initially by date desc to ensure order
       items.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setDesigns(items);
       setLoading(false);
@@ -296,11 +320,16 @@ export default function App() {
     return Array.from(cats).sort();
   }, [designs]);
 
-  // FILTERED DESIGNS (SHOW ONLY APPROVED)
+  // FILTERED DESIGNS
   const filteredDesigns = useMemo(() => {
     let result = designs.filter(d => {
-      // Only show approved designs on main grid unless specifically admin panel logic
-      if (d.status && d.status !== 'approved') return false;
+      // Logic: Show if Approved OR if (User is Owner or Admin)
+      const isApproved = d.status === 'approved';
+      const isOwner = user && d.uploaderId === user.uid;
+      const isSiteAdmin = isAdmin;
+
+      // Filter Condition: Must be approved OR Owned by user OR Admin
+      if (!isApproved && !isOwner && !isSiteAdmin) return false;
 
       const matchesSearch = d.title?.toLowerCase().includes(searchQuery.toLowerCase()) || d.tag?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesColor = selectedColorFilter === 'All' || d.color === selectedColorFilter;
@@ -316,7 +345,6 @@ export default function App() {
 
   const displayedDesigns = useMemo(() => filteredDesigns.slice(0, visibleCount), [filteredDesigns, visibleCount]);
 
-  // Pending designs for admin
   const pendingDesigns = useMemo(() => designs.filter(d => d.status === 'pending'), [designs]);
 
   // --- ACTIONS ---
@@ -424,7 +452,6 @@ export default function App() {
   };
 
   const handleUpload = async (retryData = null) => {
-    // If retryData passed (from retry button) use it, else use state
     const activeData = retryData || { 
         title: newDesignTitle, 
         tag: newDesignTag, 
@@ -490,21 +517,8 @@ export default function App() {
         createdAt: serverTimestamp() 
       });
 
-      if (user && !isAdmin && userProfile) {
-          const newUploads = (userProfile.uploads || 0) + 1;
-          let newLimit = userProfile.dailyLimit || 5;
-          let newTrust = userProfile.trustLevel || 1;
-          if (newUploads >= 20) { newTrust = 3; newLimit = 20; }
-          else if (newUploads >= 5) { newTrust = 2; newLimit = 10; }
-          newLimit += 1;
-          await updateDoc(doc(db, 'users', user.uid), {
-              uploads: newUploads,
-              dailyLimit: newLimit,
-              trustLevel: newTrust,
-              points: increment(10)
-          });
-      }
-
+      // No points update here - moved to approval
+      
       updateStatus(uploadStatus === 'pending' ? 'অপেক্ষমান (Pending)' : 'সম্পন্ন!');
       if(uploadStatus === 'pending') alert("আপলোড সফল! অ্যাডমিন অ্যাপ্রুভ করার পর এটি সাইটে দেখাবে।");
       
@@ -558,7 +572,31 @@ export default function App() {
   const approveDesign = async (d) => {
       try {
         await updateDoc(doc(db, 'designs', d.id), { status: 'approved' });
-        alert("ডিজাইন অ্যাপ্রুভ হয়েছে!");
+        
+        // REWARD LOGIC - HERE
+        if (d.uploaderId && d.uploaderId !== 'anon') {
+            const uRef = doc(db, 'users', d.uploaderId);
+            const uSnap = await getDoc(uRef);
+            if (uSnap.exists()) {
+                const uData = uSnap.data();
+                const newUploads = (uData.uploads || 0) + 1;
+                let newLimit = uData.dailyLimit || 5;
+                let newTrust = uData.trustLevel || 1;
+
+                if (newUploads >= 20) { newTrust = 3; newLimit = 20; }
+                else if (newUploads >= 5) { newTrust = 2; newLimit = 10; }
+                
+                newLimit += 1; // Bonus per valid upload
+
+                await updateDoc(uRef, {
+                    uploads: newUploads,
+                    dailyLimit: newLimit,
+                    trustLevel: newTrust,
+                    points: increment(10)
+                });
+            }
+        }
+        alert("ডিজাইন অ্যাপ্রুভ হয়েছে এবং পয়েন্ট যুক্ত হয়েছে!");
       } catch (err) { alert("Error approving design"); }
   };
 
@@ -579,6 +617,7 @@ export default function App() {
   };
 
   const openSourceLink = async (design) => {
+    // 1. Validation Checks
     if (!isDesigner && !isAdmin) {
         if (!userProfile?.name) { setShowRegisterModal(true); return; }
         if (userProfile?.isBanned) { alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে।"); return; }
@@ -586,9 +625,9 @@ export default function App() {
             alert(`আপনার আজকের ডাউনলোড লিমিট (${userProfile.dailyLimit}) শেষ।`);
             return;
         }
-        await updateDoc(doc(db, 'users', user.uid), { downloadCount: increment(1) });
     }
 
+    // 2. Lock Check
     if (design.isLocked && !isDesigner && !isAdmin) {
         if (unlockInput !== design.password) {
             const pass = prompt("এই ফাইলটি লক করা। পাসওয়ার্ড দিন:");
@@ -596,7 +635,13 @@ export default function App() {
         }
     }
 
+    // 3. Open Link (Action)
     window.open(design.sourceLink, '_blank');
+
+    // 4. Deduct Point (After Action)
+    if (!isDesigner && !isAdmin) {
+        await updateDoc(doc(db, 'users', user.uid), { downloadCount: increment(1) });
+    }
     updateDoc(doc(db, 'designs', design.id), { downloads: increment(1) }).catch(e => console.log("Popularity update failed", e));
   };
 
@@ -942,24 +987,14 @@ export default function App() {
                   <option value="name">নাম (A-Z)</option>
                </select>
             </div>
-            
-            {/* Color Filter */}
             <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                 <Palette size={14} className="text-indigo-600"/>
-                <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}>
-                    <option value="All">সব কালার</option>
-                    {COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}
-                </select>
+                <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}><option value="All">সব কালার</option>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
             </div>
-
-            {/* Category Filter */}
             {isDesigner && (
               <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                   <Filter size={14} className="text-indigo-600"/>
-                  <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedCategory || 'All'} onChange={(e) => setSelectedCategory(e.target.value)}>
-                      <option value="All">সব ক্যাটাগরি</option>
-                      {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
-                  </select>
+                  <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedCategory || 'All'} onChange={(e) => setSelectedCategory(e.target.value)}><option value="All">সব ক্যাটাগরি</option>{categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select>
               </div>
             )}
           </div>
@@ -988,7 +1023,15 @@ export default function App() {
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
               {displayedDesigns.map(design => (
-                <div key={design.id} className="bg-white rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden group transition-all duration-300 hover:-translate-y-1 flex flex-col">
+                <div key={design.id} className="bg-white rounded-2xl shadow-[0_2px_8px_rgba(0,0,0,0.04)] hover:shadow-[0_12px_24px_rgba(0,0,0,0.08)] border border-slate-100 overflow-hidden group transition-all duration-300 hover:-translate-y-1 flex flex-col relative">
+                  
+                  {/* PENDING BADGE FOR OWNER */}
+                  {design.status === 'pending' && (
+                      <div className="absolute top-0 left-0 right-0 bg-yellow-400 text-yellow-900 text-xs font-bold text-center py-1 z-10 flex items-center justify-center gap-1">
+                          <Clock size={12}/> অপেক্ষমান (Pending)
+                      </div>
+                  )}
+
                   <div className="relative w-full aspect-[4/5] bg-slate-50 overflow-hidden cursor-pointer border-b border-slate-50" onClick={() => setSelectedImage(design)}>
                     <img src={design.imageData} alt={design.title} className="w-full h-full object-contain p-2 transition-transform duration-500 group-hover:scale-105" loading="lazy" />
                     {design.isLocked && <div className="absolute top-3 left-3 bg-red-600 text-white p-1.5 rounded-full shadow-lg"><Lock size={12}/></div>}
