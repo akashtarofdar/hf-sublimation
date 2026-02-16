@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -26,7 +26,7 @@ import {
   Settings, LayoutDashboard, CheckCircle, XCircle,
   ArrowDownUp, RefreshCw, PlusCircle, BarChart3, Trash, Link as LinkIcon,
   Layers, Save, FileText, FileImage, Share2, User, UserX, AlertTriangle, ShieldAlert,
-  Award, Smartphone, UserPlus, Info, ExternalLink, KeyRound
+  Award, Smartphone, UserPlus, Info, ExternalLink, KeyRound, CheckSquare
 } from 'lucide-react';
 
 // --- FIREBASE CONFIGURATION ---
@@ -60,7 +60,6 @@ const COLORS = [
 
 // --- UTILS ---
 
-// Device Fingerprinting Logic
 const generateDeviceId = async () => {
   try {
     const canvas = document.createElement('canvas');
@@ -73,13 +72,8 @@ const generateDeviceId = async () => {
     ctx.fillRect(125,1,62,20);
     ctx.fillStyle = "#069";
     ctx.fillText(txt, 2, 15);
-    ctx.fillStyle = "rgba(102, 204, 0, 0.7)";
-    ctx.fillText(txt, 4, 17);
-    
     const dataURI = canvas.toDataURL();
     const navData = navigator.userAgent + navigator.language + screen.colorDepth + screen.width + screen.height + new Date().getTimezoneOffset();
-    
-    // Simple hash function
     let hash = 0;
     const str = dataURI + navData;
     for (let i = 0; i < str.length; i++) {
@@ -101,16 +95,13 @@ const getDominantColor = (imgElement) => {
     canvas.height = 100;
     ctx.drawImage(imgElement, 0, 0, 100, 100);
     const data = ctx.getImageData(0, 0, 100, 100).data;
-    
     let r=0, g=0, b=0, count=0;
     for (let i = 0; i < data.length; i += 4) {
       r += data[i]; g += data[i+1]; b += data[i+2]; count++;
     }
     r = Math.floor(r/count); g = Math.floor(g/count); b = Math.floor(b/count);
-
     let closest = 'Multicolor';
     let minDiff = Infinity;
-
     COLORS.forEach(c => {
       if (!c.rgb) return;
       const diff = Math.sqrt(Math.pow(r - c.rgb[0], 2) + Math.pow(g - c.rgb[1], 2) + Math.pow(b - c.rgb[2], 2));
@@ -149,7 +140,6 @@ const compressImage = (file) => {
 };
 
 export default function App() {
-  // --- STATE ---
   const [user, setUser] = useState(null);
   const [userProfile, setUserProfile] = useState(null); 
   const [currentDeviceId, setCurrentDeviceId] = useState('');
@@ -163,7 +153,7 @@ export default function App() {
   
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [showRegisterModal, setShowRegisterModal] = useState(false);
-  const [showInfoModal, setShowInfoModal] = useState(false); // New Info Modal
+  const [showInfoModal, setShowInfoModal] = useState(false);
   
   const [loginType, setLoginType] = useState('designer'); 
   const [loginInput, setLoginInput] = useState({ user: '', pass: '' });
@@ -263,6 +253,8 @@ export default function App() {
     const q = query(collection(db, 'designs'));
     const unsub = onSnapshot(q, (snapshot) => {
       const items = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+      // Sort initially by date desc to ensure order
+      items.sort((a, b) => (b.createdAt?.seconds || 0) - (a.createdAt?.seconds || 0));
       setDesigns(items);
       setLoading(false);
     }, (err) => console.error(err));
@@ -304,8 +296,12 @@ export default function App() {
     return Array.from(cats).sort();
   }, [designs]);
 
+  // FILTERED DESIGNS (SHOW ONLY APPROVED)
   const filteredDesigns = useMemo(() => {
     let result = designs.filter(d => {
+      // Only show approved designs on main grid unless specifically admin panel logic
+      if (d.status && d.status !== 'approved') return false;
+
       const matchesSearch = d.title?.toLowerCase().includes(searchQuery.toLowerCase()) || d.tag?.toLowerCase().includes(searchQuery.toLowerCase());
       const matchesColor = selectedColorFilter === 'All' || d.color === selectedColorFilter;
       const matchesCategory = selectedCategory === 'All' || d.tag === selectedCategory;
@@ -319,6 +315,9 @@ export default function App() {
   }, [designs, searchQuery, selectedColorFilter, selectedCategory, sortOption]);
 
   const displayedDesigns = useMemo(() => filteredDesigns.slice(0, visibleCount), [filteredDesigns, visibleCount]);
+
+  // Pending designs for admin
+  const pendingDesigns = useMemo(() => designs.filter(d => d.status === 'pending'), [designs]);
 
   // --- ACTIONS ---
   const handleLogin = (e) => {
@@ -344,7 +343,6 @@ export default function App() {
   const handleUserRegister = async (e) => {
     e.preventDefault();
     if (!registerInput.name || !registerInput.whatsapp) return alert("সব তথ্য দিন");
-    const q = query(collection(db, 'users'), where('deviceId', '==', currentDeviceId));
     try {
         await setDoc(doc(db, 'users', user.uid), {
             name: registerInput.name,
@@ -426,6 +424,7 @@ export default function App() {
   };
 
   const handleUpload = async (retryData = null) => {
+    // If retryData exists, use it, otherwise use current state
     const activeData = retryData || { 
         title: newDesignTitle, 
         tag: newDesignTag, 
@@ -441,20 +440,12 @@ export default function App() {
         password: designPassword
     };
 
-    // --- FIX: BETTER VALIDATION LOGIC ---
-    if (!activeData.title || activeData.title.trim() === '') {
-        return alert("ডিজাইনের নাম দিন!");
-    }
-
+    if (!activeData.title || activeData.title.trim() === '') return alert("ডিজাইনের নাম দিন!");
+    
     if (activeData.useImageLink) {
-        if (!activeData.imageLinkInput || activeData.imageLinkInput.trim() === '') {
-             return alert("ইমেজের লিংক দিন!");
-        }
+        if (!activeData.imageLinkInput || activeData.imageLinkInput.trim() === '') return alert("ইমেজের লিংক দিন!");
     } else {
-        // File Mode: Check file OR existing preview (in case of edit/retry)
-        if (!activeData.fileToUpload && !activeData.imageData) {
-            return alert("ছবি আপলোড করুন!");
-        }
+        if (!activeData.fileToUpload && !activeData.imageData) return alert("ছবি আপলোড করুন!");
     }
 
     const uploadId = Date.now();
@@ -483,6 +474,8 @@ export default function App() {
       }
 
       updateStatus('ডাটাবেসে সেভ হচ্ছে...');
+      const uploadStatus = isAdmin ? 'approved' : 'pending';
+
       await addDoc(collection(db, 'designs'), { 
         title: activeData.title, 
         tag: activeData.tag, 
@@ -493,6 +486,7 @@ export default function App() {
         downloads: 0, 
         isLocked: isAdmin ? (activeData.isLocked || false) : false,
         password: isAdmin ? (activeData.password || '') : '',
+        status: uploadStatus,
         createdAt: serverTimestamp() 
       });
 
@@ -511,7 +505,9 @@ export default function App() {
           });
       }
 
-      updateStatus('সম্পন্ন!');
+      updateStatus(uploadStatus === 'pending' ? 'অপেক্ষমান (Pending)' : 'সম্পন্ন!');
+      if(uploadStatus === 'pending') alert("আপলোড সফল! অ্যাডমিন অ্যাপ্রুভ করার পর এটি সাইটে দেখাবে।");
+      
       setTimeout(() => setActiveUploads(prev => prev.filter(i => i.id !== uploadId)), 3000);
     } catch (err) {
       updateStatus('ব্যর্থ: ' + err.message, true);
@@ -559,6 +555,13 @@ export default function App() {
     }
   };
 
+  const approveDesign = async (d) => {
+      try {
+        await updateDoc(doc(db, 'designs', d.id), { status: 'approved' });
+        alert("ডিজাইন অ্যাপ্রুভ হয়েছে!");
+      } catch (err) { alert("Error approving design"); }
+  };
+
   const submitDeleteRequest = async () => {
     if (!deleteReason || !targetDesign) return;
     try {
@@ -580,7 +583,7 @@ export default function App() {
         if (!userProfile?.name) { setShowRegisterModal(true); return; }
         if (userProfile?.isBanned) { alert("আপনার অ্যাকাউন্ট ব্যান করা হয়েছে।"); return; }
         if ((userProfile.downloadCount || 0) >= (userProfile.dailyLimit || 5)) {
-            alert(`আপনার আজকের ডাউনলোড লিমিট (${userProfile.dailyLimit}) শেষ। লিমিট বাড়াতে ফাইল আপলোড করুন।`);
+            alert(`আপনার আজকের ডাউনলোড লিমিট (${userProfile.dailyLimit}) শেষ।`);
             return;
         }
         await updateDoc(doc(db, 'users', user.uid), { downloadCount: increment(1) });
@@ -681,7 +684,9 @@ export default function App() {
                 await addDoc(collection(db, 'designs'), { 
                     title: newItems[i].title, tag: newItems[i].category, color: newItems[i].color, 
                     imageData: newItems[i].imageUrl, sourceLink: newItems[i].sourceLink, 
-                    uploaderId: user?.uid || 'anon', downloads: 0, isLocked: false, password: '', createdAt: serverTimestamp() 
+                    uploaderId: user?.uid || 'anon', downloads: 0, isLocked: false, password: '', 
+                    status: isAdmin ? 'approved' : 'pending', // Bulk uploads also need approval if not admin
+                    createdAt: serverTimestamp() 
                 });
                 newItems[i].status = 'done';
             } catch (err) { newItems[i].status = 'error'; }
@@ -713,19 +718,19 @@ export default function App() {
                         <div className="lg:col-span-2 space-y-6">
                             <div className="bg-white p-6 rounded-2xl shadow-sm border">
                                 <h3 className="font-bold mb-3 flex items-center gap-2 text-slate-700"><ImageIcon size={18}/> ইমেজ লিংক (Postimages Direct Link)</h3>
-                                <textarea className="w-full h-64 p-4 border rounded-xl text-xs font-mono bg-slate-50 outline-none" placeholder={`Example:\nhttps://i.postimg.cc/abc.jpg\nhttps://i.postimg.cc/xyz.jpg`} value={rawImageLinks} onChange={e => setRawImageLinks(e.target.value)}></textarea>
+                                <textarea className="w-full h-64 p-4 border rounded-xl text-xs font-mono bg-slate-50 outline-none" placeholder={`Example:\nhttps://i.postimg.cc/abc.jpg\nhttps://i.postimg.cc/xyz.jpg`} value={rawImageLinks || ''} onChange={e => setRawImageLinks(e.target.value)}></textarea>
                             </div>
                             <div className="bg-white p-6 rounded-2xl shadow-sm border">
                                 <h3 className="font-bold mb-3 flex items-center gap-2 text-slate-700"><LinkIcon size={18}/> সোর্স ফাইল লিংক (Optional)</h3>
-                                <textarea className="w-full h-40 p-4 border rounded-xl text-xs font-mono bg-slate-50 outline-none" placeholder="Links here..." value={rawSourceLinks} onChange={e => setRawSourceLinks(e.target.value)}></textarea>
+                                <textarea className="w-full h-40 p-4 border rounded-xl text-xs font-mono bg-slate-50 outline-none" placeholder="Links here..." value={rawSourceLinks || ''} onChange={e => setRawSourceLinks(e.target.value)}></textarea>
                             </div>
                         </div>
                         <div className="space-y-6">
                             <div className="bg-white p-6 rounded-2xl shadow-sm border h-full">
                                 <h3 className="font-bold mb-6 flex items-center gap-2 text-slate-700"><Settings size={18}/> গ্লোবাল সেটিংস</h3>
                                 <div className="space-y-4">
-                                    <div><label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট ক্যাটাগরি</label><select className="w-full p-3 border rounded-xl font-medium" value={globalCategory} onChange={e => setGlobalCategory(e.target.value)}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
-                                    <div><label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট কালার</label><select className="w-full p-3 border rounded-xl font-medium" value={globalColor} onChange={e => setGlobalColor(e.target.value)}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select></div>
+                                    <div><label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট ক্যাটাগরি</label><select className="w-full p-3 border rounded-xl font-medium" value={globalCategory || 'Sublimation'} onChange={e => setGlobalCategory(e.target.value)}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select></div>
+                                    <div><label className="text-xs font-bold text-slate-500 block mb-1">ডিফল্ট কালার</label><select className="w-full p-3 border rounded-xl font-medium" value={globalColor || 'Multicolor'} onChange={e => setGlobalColor(e.target.value)}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select></div>
                                     <div className="pt-6"><button onClick={parseLinks} disabled={!rawImageLinks.trim()} className="w-full py-4 bg-indigo-600 disabled:bg-slate-300 text-white rounded-xl font-bold shadow-lg flex justify-center items-center gap-2"><FileText size={20}/> প্রিভিউ জেনারেট করুন</button></div>
                                 </div>
                             </div>
@@ -738,14 +743,18 @@ export default function App() {
                                 <div key={item.id} className={`bg-white p-3 rounded-xl border flex gap-3 ${item.status === 'done' ? 'border-green-500' : 'border-slate-200'}`}>
                                     <img src={item.imageUrl} className="w-24 h-32 object-contain bg-slate-50 rounded-lg border" />
                                     <div className="flex-1 space-y-2 overflow-hidden">
-                                        <input type="text" className="w-full p-1.5 border rounded text-sm font-bold" value={item.title} onChange={(e) => updateItem(index, 'title', e.target.value)} disabled={item.status === 'done'}/>
+                                        <input type="text" className="w-full p-1.5 border rounded text-sm font-bold" value={item.title || ''} onChange={(e) => updateItem(index, 'title', e.target.value)} disabled={item.status === 'done'}/>
                                         <div className="flex gap-2">
-                                            <select className="flex-1 p-1 border rounded text-xs" value={item.category} onChange={(e) => updateItem(index, 'category', e.target.value)} disabled={item.status === 'done'}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
-                                            <select className="w-24 p-1 border rounded text-xs" value={item.color} onChange={(e) => updateItem(index, 'color', e.target.value)} disabled={item.status === 'done'}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
+                                            <select className="flex-1 p-1 border rounded text-xs" value={item.category || 'Sublimation'} onChange={(e) => updateItem(index, 'category', e.target.value)} disabled={item.status === 'done'}>{categories.map(c => <option key={c} value={c}>{c}</option>)}</select>
+                                            <select className="w-24 p-1 border rounded text-xs" value={item.color || 'Multicolor'} onChange={(e) => updateItem(index, 'color', e.target.value)} disabled={item.status === 'done'}>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
                                         </div>
                                         <div className="flex justify-between items-center pt-1">
                                             <span className={`text-xs font-bold ${item.status === 'done' ? 'text-green-600' : 'text-slate-400'}`}>{item.status}</span>
                                             {item.status !== 'done' && (<button onClick={() => removeItem(index)} className="text-red-400 hover:text-red-600"><Trash size={16}/></button>)}
+                                        </div>
+                                        <div className="flex items-center gap-1 bg-slate-50 p-1 rounded border">
+                                            <LinkIcon size={12} className="text-slate-400"/>
+                                            <input type="text" className="w-full bg-transparent text-xs outline-none text-slate-600" value={item.sourceLink || ''} onChange={(e) => updateItem(index, 'sourceLink', e.target.value)} placeholder="Source Link..." disabled={item.status === 'done'}/>
                                         </div>
                                     </div>
                                 </div>
@@ -773,6 +782,10 @@ export default function App() {
             <h2 className="text-2xl font-bold mb-8 text-indigo-400">Admin Panel</h2>
             <nav className="space-y-2 flex-1">
               <button onClick={() => setAdminView('dashboard')} className={`w-full text-left p-3 rounded ${adminView==='dashboard' ? 'bg-indigo-600' : 'hover:bg-slate-800'}`}><LayoutDashboard className="inline mr-2" size={18}/> ড্যাশবোর্ড</button>
+              <button onClick={() => setAdminView('pending')} className={`w-full text-left p-3 rounded ${adminView==='pending' ? 'bg-indigo-600' : 'hover:bg-slate-800'}`}>
+                  <CheckSquare className="inline mr-2" size={18}/> পেন্ডিং 
+                  {pendingDesigns.length > 0 && <span className="ml-2 bg-red-500 text-xs px-2 py-0.5 rounded-full">{pendingDesigns.length}</span>}
+              </button>
               <button onClick={() => setAdminView('users')} className={`w-full text-left p-3 rounded ${adminView==='users' ? 'bg-indigo-600' : 'hover:bg-slate-800'}`}><User className="inline mr-2" size={18}/> ইউজারস</button>
               <button onClick={() => setAdminView('locked')} className={`w-full text-left p-3 rounded ${adminView==='locked' ? 'bg-indigo-600' : 'hover:bg-slate-800'}`}><Lock className="inline mr-2" size={18}/> লকড ফাইলস</button>
               <button onClick={() => setShowAdminPanel(false)} className="bg-slate-800 p-3 rounded text-center hover:bg-red-600 transition w-full mt-4">Back to Site</button>
@@ -787,8 +800,8 @@ export default function App() {
                             <p className="text-3xl font-black text-indigo-600">{designs.length}</p>
                         </div>
                         <div className="bg-white p-6 rounded-2xl shadow-sm border text-center">
-                            <p className="text-slate-500 text-sm font-bold mb-1">মোট ভিউস</p>
-                            <p className="text-3xl font-black text-purple-600">{config.totalViews}</p>
+                            <p className="text-slate-500 text-sm font-bold mb-1">পেন্ডিং ডিজাইন</p>
+                            <p className="text-3xl font-black text-orange-600">{pendingDesigns.length}</p>
                         </div>
                         <div className="bg-white p-6 rounded-2xl shadow-sm border text-center">
                             <p className="text-slate-500 text-sm font-bold mb-1">মোট ডাউনলোড</p>
@@ -809,6 +822,22 @@ export default function App() {
                         ))}
                         </div>
                     </div>
+                 </div>
+             )}
+
+             {adminView === 'pending' && (
+                 <div className="grid grid-cols-2 md:grid-cols-3 gap-4 animate-in fade-in">
+                     {pendingDesigns.map(d => (
+                         <div key={d.id} className="bg-white p-4 rounded-xl border relative flex flex-col gap-2">
+                             <img src={d.imageData} className="h-40 w-full object-contain bg-slate-50 rounded"/>
+                             <p className="font-bold text-sm truncate">{d.title}</p>
+                             <div className="flex gap-2 mt-2">
+                                 <button onClick={() => deleteDoc(doc(db, 'designs', d.id))} className="flex-1 py-2 bg-red-100 text-red-600 rounded-lg font-bold flex justify-center"><X/></button>
+                                 <button onClick={() => { updateDoc(doc(db, 'designs', d.id), { status: 'approved' }); alert('Approved!'); }} className="flex-1 py-2 bg-green-600 text-white rounded-lg font-bold flex justify-center"><CheckCircle/></button>
+                             </div>
+                         </div>
+                     ))}
+                     {pendingDesigns.length === 0 && <p className="text-slate-400 col-span-3 text-center py-10">কোনো পেন্ডিং ডিজাইন নেই</p>}
                  </div>
              )}
 
@@ -913,14 +942,24 @@ export default function App() {
                   <option value="name">নাম (A-Z)</option>
                </select>
             </div>
+            
+            {/* Color Filter */}
             <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                 <Palette size={14} className="text-indigo-600"/>
-                <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}><option value="All">সব কালার</option>{COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}</select>
+                <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedColorFilter || 'All'} onChange={(e) => setSelectedColorFilter(e.target.value)}>
+                    <option value="All">সব কালার</option>
+                    {COLORS.map(c => <option key={c.name} value={c.name}>{c.label}</option>)}
+                </select>
             </div>
+
+            {/* Category Filter */}
             {isDesigner && (
               <div className="flex items-center gap-2 shrink-0 bg-white border border-slate-200 rounded-full px-3 py-1.5 shadow-sm">
                   <Filter size={14} className="text-indigo-600"/>
-                  <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedCategory || 'All'} onChange={(e) => setSelectedCategory(e.target.value)}><option value="All">সব ক্যাটাগরি</option>{categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}</select>
+                  <select className="bg-transparent text-xs font-bold outline-none text-slate-700 cursor-pointer" value={selectedCategory || 'All'} onChange={(e) => setSelectedCategory(e.target.value)}>
+                      <option value="All">সব ক্যাটাগরি</option>
+                      {categories.map(cat => <option key={cat} value={cat}>{cat}</option>)}
+                  </select>
               </div>
             )}
           </div>
@@ -944,7 +983,7 @@ export default function App() {
       {/* --- MAIN GRID --- */}
       <main className="max-w-7xl mx-auto p-4 md:p-8">
         {displayedDesigns.length === 0 ? (
-          <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি</div>
+          <div className="text-center py-20 text-slate-400">কোনো ডিজাইন পাওয়া যায়নি (Only Approved Designs Shown)</div>
         ) : (
           <>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6 md:gap-8">
