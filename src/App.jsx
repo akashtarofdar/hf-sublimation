@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { initializeApp } from 'firebase/app';
 import { 
   getAuth, 
@@ -222,7 +222,6 @@ export default function App() {
 
   // Handle Special Routes
   useEffect(() => {
-    // Check URL hash or query params as backup if pathname fails in some environments
     const path = window.location.pathname.toLowerCase();
     if (path.includes('admin') || window.location.hash.includes('admin')) {
         setLoginType('admin');
@@ -442,8 +441,20 @@ export default function App() {
         password: designPassword
     };
 
-    if (activeData.useImageLink ? (!activeData.imageLinkInput || !activeData.title) : (!activeData.fileToUpload && !activeData.imageData)) {
-        return alert("নাম এবং ছবি দিন!");
+    // --- FIX: BETTER VALIDATION LOGIC ---
+    if (!activeData.title || activeData.title.trim() === '') {
+        return alert("ডিজাইনের নাম দিন!");
+    }
+
+    if (activeData.useImageLink) {
+        if (!activeData.imageLinkInput || activeData.imageLinkInput.trim() === '') {
+             return alert("ইমেজের লিংক দিন!");
+        }
+    } else {
+        // File Mode: Check file OR existing preview (in case of edit/retry)
+        if (!activeData.fileToUpload && !activeData.imageData) {
+            return alert("ছবি আপলোড করুন!");
+        }
     }
 
     const uploadId = Date.now();
@@ -633,7 +644,7 @@ export default function App() {
       }
   };
 
-  // --- BULK UPLOAD COMPONENT (FULL) ---
+  // --- BULK UPLOAD COMPONENT ---
   const BulkUploadDashboard = () => {
     const [rawImageLinks, setRawImageLinks] = useState('');
     const [rawSourceLinks, setRawSourceLinks] = useState('');
@@ -741,7 +752,7 @@ export default function App() {
                             ))}
                         </div>
                         <div className="sticky bottom-4 bg-white p-4 rounded-2xl shadow-xl border flex gap-4 items-center justify-between">
-                             <button onClick={() => setBulkItems([])} className="px-6 py-3 border rounded-xl font-bold text-slate-500">রিসেট</button>
+                             <button onClick={() => { setBulkItems([]); setRawImageLinks(''); setRawSourceLinks(''); }} className="px-6 py-3 border rounded-xl font-bold text-slate-500">রিসেট</button>
                              <button onClick={processBulkUpload} disabled={processing} className="px-10 py-3 bg-indigo-600 text-white rounded-xl font-bold shadow-lg">{processing ? <Loader2 className="animate-spin"/> : 'সব আপলোড করুন'}</button>
                         </div>
                     </div>
